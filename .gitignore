@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+*.o
+
+# Database logs and data files
+data/*.log
+
+# IDEs and Editors
+.vscode/
+
+# OS generated files
+.DS_Store
+
+MD/
+follow.MD
+structure.md
