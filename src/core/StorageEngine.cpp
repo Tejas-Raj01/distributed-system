@@ -1,7 +1,50 @@
 #include "../../include/core/StorageEngine.hpp"
+#include <chrono>
+#include <iostream>
+
+// Helper: Current epoch time nikalne ke liye (in seconds)
+long long getCurrentTime() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 // Constructor
-StorageEngine::StorageEngine(size_t max_capacity) : capacity(max_capacity) {}
+// Constructor: Thread ko start karo
+StorageEngine::StorageEngine(size_t max_capacity) : capacity(max_capacity), is_running(true) {
+    cleanup_thread = std::thread(&StorageEngine::cleanupTask, this);
+}
+
+// Destructor: Thread ko safely stop karo
+StorageEngine::~StorageEngine() {
+    is_running = false;
+    if (cleanup_thread.joinable()) {
+        cleanup_thread.join();
+    }
+}
+
+// THE GARBAGE COLLECTOR
+void StorageEngine::cleanupTask() {
+    while (is_running) {
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // Har 1 second mein utho
+        
+        // Write lock lagao kyunki hum data delete kar sakte hain
+        std::unique_lock<std::shared_mutex> lock(rw_lock);
+        long long now = getCurrentTime();
+
+        // Poore map ko scan karo
+        for (auto it = dataStore.begin(); it != dataStore.end(); ) {
+            // Agar expiry_time 0 se bada hai aur current time se chota ho gaya hai (Expire ho gaya)
+            if (it->second.expiry_time > 0 && it->second.expiry_time < now) {
+                // LRU list aur Map dono se udao
+                lruQueue.erase(lruMap[it->first]);
+                lruMap.erase(it->first);
+                it = dataStore.erase(it); // Safe deletion while iterating
+            } else {
+                ++it;
+            }
+        }
+    }
+}
 
 // Helper Function: Sabse purani key ko delete karne ke liye
 void StorageEngine::evictOldest() {
