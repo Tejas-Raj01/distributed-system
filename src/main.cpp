@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib> // std::stoi ke liye
+#include <functional>
 
 // Saare custom modules include karein
 #include "../include/core/StorageEngine.hpp"
@@ -36,7 +37,7 @@ int main(int argc, char* argv[]) {
     wal.recover(storage);
 
     // 4. Consistent Hashing (Router Ring) setup
-    ConsistentHash hashRing(3); // 3 virtual nodes per physical node
+    ConsistentHash hashRing(100); // 100 virtual nodes per physical node
     hashRing.addNode(myAddress); // Apne aap ko ring mein daalo
 
     // Agar start karte waqt dusre servers (Peers) ke address diye hain, toh unko ring mein dalo

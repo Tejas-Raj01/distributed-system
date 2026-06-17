@@ -1,6 +1,7 @@
 #include "../../include/core/StorageEngine.hpp"
 #include <chrono>
 #include <iostream>
+#include <vector>
 
 // Helper: Current epoch time nikalne ke liye (in seconds)
 long long getCurrentTime() {
@@ -118,4 +119,18 @@ bool StorageEngine::remove(const std::string& key) {
     dataStore.erase(key);
     
     return true;
+}
+
+// GET ALL DATA (Rebalancing ke liye)
+std::vector<std::pair<std::string, std::string>> StorageEngine::getAllData() {
+    // Shared lock lagayenge taaki jab hum data read kar rahe hon, 
+    // toh baaki log bhi read kar sakein (System block na ho)
+    std::shared_lock<std::shared_mutex> lock(rw_lock);
+    
+    std::vector<std::pair<std::string, std::string>> all_data;
+    for (const auto& item : dataStore) {
+        // item.first = key, item.second.value = data
+        all_data.push_back({item.first, item.second.value}); 
+    }
+    return all_data;
 }

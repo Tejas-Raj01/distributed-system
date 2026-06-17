@@ -204,6 +204,59 @@ void Router::setupRoutes() {
         res.status = 200;
         res.set_content("Backup Deleted", "text/plain");
     });
+
+    // 3. ADMIN API: Data Rebalancing (Naya node aane par)
+    server.Get("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
+        std::cout << "\n[Rebalance] Starting cluster rebalancing process..." << std::endl;
+        
+        auto allData = storage->getAllData();
+        int transferCount = 0;
+
+        for (const auto& item : allData) {
+            std::string key = item.first;
+            std::string value = item.second;
+            
+            // HashRing se pucho ki is key ka ASLI maalik ab kaun hai
+            std::string currentOwner = hashRing->getOwnerNode(key);
+
+            // NAYI DEBUG LINE: Isse terminal par saaf dikhega kaun kiska maalik hai
+            std::cout << "[Debug Ring] Key: " << key << " -> Owner according to Ring: " << currentOwner << " (My Address: " << myAddress << ")" << std::endl;
+
+            // Agar naya node aane ki wajah se maalik badal gaya hai
+            if (currentOwner != myAddress) {
+                std::cout << "[Rebalance] Migrating Key: " << key << " -> to Node: " << currentOwner << std::endl;
+
+                // Naye maalik ko uske /internal/put par data transfer karo
+                size_t colonPos = currentOwner.find(':');
+                std::string host = currentOwner.substr(0, colonPos);
+                int port = std::stoi(currentOwner.substr(colonPos + 1));
+
+                httplib::Client cli(host, port);
+                cli.set_connection_timeout(2, 0);
+                
+                httplib::Params params;
+                params.emplace("key", key);
+                params.emplace("value", value);
+                
+                // Transferring data...
+                auto transferRes = cli.Post("/internal/put", params);
+                
+                if (transferRes && transferRes->status == 200) {
+                    // Transfer successful! Ab apne RAM aur WAL se hata do
+                    storage->remove(key);
+                    wal->appendLog("DELETE", key, "");
+                    transferCount++;
+                } else {
+                    std::cerr << "[Rebalance] FAILED to migrate key: " << key << std::endl;
+                }
+            }
+        }
+
+        std::cout << "[Rebalance] Process completed. Keys transferred: " << transferCount << "\n" << std::endl;
+        
+        std::string jsonResponse = R"({"status": "rebalanced", "keys_transferred": )" + std::to_string(transferCount) + R"(})";
+        res.set_content(jsonResponse, "application/json");
+    });
 }
 
 // Server ko port par listen karwana

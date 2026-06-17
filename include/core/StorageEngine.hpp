@@ -7,6 +7,7 @@
 #include <optional>
 #include <thread>   // NAYA: Background thread ke liye
 #include <atomic>   // NAYA: Thread ko safely stop karne ke liye
+#include <vector>
 
 struct Record {
     std::string value;
@@ -22,6 +23,7 @@ private:
     std::list<std::string> lruQueue;
     std::unordered_map<std::string, std::list<std::string>::iterator> lruMap;
     
+
     // Reader-Writer Lock
     mutable std::shared_mutex rw_lock;
  
@@ -34,6 +36,9 @@ private:
     void cleanupTask(); // Thread jo purane data ko delete karega
 
 public:
+    // NAYA: Data rebalancing ke liye saara data nikalne ka function
+    std::vector<std::pair<std::string, std::string>> getAllData();
+    
     // Constructor jisme memory limit set hogi
     StorageEngine(size_t max_capacity);
     ~StorageEngine();

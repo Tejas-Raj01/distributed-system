@@ -5,12 +5,12 @@
 ConsistentHash::ConsistentHash(int v_nodes) : virtual_nodes(v_nodes) {}
 
 // Hashing Function
+// THE FIX: Production-Grade FNV-1a Hash Function
 size_t ConsistentHash::computeHash(const std::string& key) {
-    // C++ ka inbuilt hash function. 
-    // Note: Production mein yahan SHA-256 ya MurmurHash3 use karna better rehta hai.
-    size_t hash = 5381;
+    size_t hash = 14695981039346656037ULL; // FNV offset basis
     for (char c : key) {
-        hash = ((hash << 5) + hash) + c; // hash * 33 + c
+        hash ^= static_cast<size_t>(c);
+        hash *= 1099511628211ULL;          // FNV prime
     }
     return hash;
 }
