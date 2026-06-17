@@ -36,11 +36,11 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 1. PUBLIC PUT API (With Strict Quorum W=2)
+    // 1. PUBLIC PUT API (With Strict Quorum W=2 & React-Friendly JSON Response)
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
         if (!req.has_param("key") || !req.has_param("value")) {
             res.status = 400;
-            res.set_content("Missing 'key' or 'value'", "text/plain");
+            res.set_content(R"({"error": "Missing key or value"})", "application/json");
             return;
         }
 
@@ -53,12 +53,12 @@ void Router::setupRoutes() {
         if (ownerNode == myAddress) {
             std::cout << "\n[Quorum] Processing Write Request for Key: " << key << std::endl;
             
-            // STEP 1: Pehle Local RAM aur WAL mein save karo
+            // STEP 1: Local RAM aur WAL mein save karo
             wal->appendLog("PUT", key, value);
             storage->put(key, value, ttl);
-            int acks = 1; // Local save successful
+            int acks = 1; 
             
-            // STEP 2: Backup Node (Replica) ko data bhejo aur WAIT karo
+            // STEP 2: Backup Node (Replica) ko data bhejo
             bool replicaAck = false;
             if (myAddress == "127.0.0.1:8080") {
                 replicaAck = replicator->forwardToReplica(key, value, "127.0.0.1:8082", ttl);
@@ -73,20 +73,22 @@ void Router::setupRoutes() {
             // STEP 3: Quorum Logic (W=2 Check)
             if (acks >= 2) {
                 res.status = 200;
-                res.set_content("Data Saved Successfully! (Quorum: 2/2 Reached)", "text/plain");
+                // FIX: React ke liye pure JSON response bheja
+                res.set_content(R"({"status": "success"})", "application/json");
                 std::cout << "[Quorum] SUCCESS: W=2 reached.\n" << std::endl;
             } else {
-                // THE BIG MOVE: Rollback (Agar backup fail hua toh local se bhi hata do)
+                // ROLLBACK: Agar backup fail hua toh local se bhi hata do
                 std::cout << "[Quorum] ROLLBACK: Quorum failed. Reverting local write.\n" << std::endl;
-                storage->remove(key); // RAM se udhao
-                wal->appendLog("DELETE", key, ""); // WAL mein bhi delete dalo
+                storage->remove(key); 
+                wal->appendLog("DELETE", key, ""); 
                 
                 res.status = 503;
-                res.set_content("Error: Quorum Failed! Only 1 node available. Write rejected.", "text/plain");
+                // FIX: React ke liye pure JSON error format
+                res.set_content(R"({"error": "Quorum Failed"})", "application/json");
             }
         } 
         else {
-            // PROXY LOGIC (Doosre node par forward karne ke liye)
+            // PROXY LOGIC (Baki code waise hi rahega, owner node khud JSON return karega)
             std::cout << "[Router] Proxying PUT request to owner: " << ownerNode << std::endl;
             httplib::Client cli("http://" + ownerNode);
             httplib::Params params;
@@ -97,10 +99,10 @@ void Router::setupRoutes() {
             auto proxyRes = cli.Post("/put", params);
             if (proxyRes) {
                 res.status = proxyRes->status;
-                res.set_content(proxyRes->body, "text/plain");
+                res.set_content(proxyRes->body, "application/json"); // Content type updated
             } else {
                 res.status = 503;
-                res.set_content("Owner node is unreachable", "text/plain");
+                res.set_content(R"({"error": "Owner node is unreachable"})", "application/json");
             }
         }
     });
