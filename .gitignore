@@ -12,5 +12,5 @@ data/*.log
 .DS_Store
 
 MD/
-follow.MD
+follow.md
 structure.md
