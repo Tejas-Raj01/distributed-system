@@ -36,7 +36,7 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 2. PUT API (/put) - Client se data receive karna
+    // 1. PUBLIC PUT API (With Strict Quorum W=2)
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
         if (!req.has_param("key") || !req.has_param("value")) {
             res.status = 400;
@@ -46,50 +46,55 @@ void Router::setupRoutes() {
 
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
+        int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
 
-        // NAYA: TTL parameter read karo (agar user ne bheja hai toh)
-        int ttl = 0;
-        if (req.has_param("ttl")) {
-            ttl = std::stoi(req.get_param_value("ttl"));
-        }
-
-        // Hash Ring se pucho is key ka maalik (owner) kaun hai
         std::string ownerNode = hashRing->getOwnerNode(key);
 
         if (ownerNode == myAddress) {
-            // SCENARIO A: Yeh node hi is data ka maalik hai
-            std::cout << "[Router] Storing data locally for key: " << key 
-                      << (ttl > 0 ? (" (TTL: " + std::to_string(ttl) + "s)") : "") << std::endl;
+            std::cout << "\n[Quorum] Processing Write Request for Key: " << key << std::endl;
             
-            // Pehle WAL mein likho (Crash safety)
+            // STEP 1: Pehle Local RAM aur WAL mein save karo
             wal->appendLog("PUT", key, value);
-            
-            // Phir RAM (Storage Engine) mein save karo (NAYA: ttl parameter bhej rahe hain)
             storage->put(key, value, ttl);
-
+            int acks = 1; // Local save successful
+            
+            // STEP 2: Backup Node (Replica) ko data bhejo aur WAIT karo
+            bool replicaAck = false;
             if (myAddress == "127.0.0.1:8080") {
-                replicator->forwardToReplica(key, value, "127.0.0.1:8082");
+                replicaAck = replicator->forwardToReplica(key, value, "127.0.0.1:8082", ttl);
+            } else if (myAddress == "127.0.0.1:8082") {
+                replicaAck = replicator->forwardToReplica(key, value, "127.0.0.1:8080", ttl);
             }
 
-            res.status = 200;
-            res.set_content("Data Saved Successfully!", "text/plain");
+            if (replicaAck) {
+                acks++;
+            }
+
+            // STEP 3: Quorum Logic (W=2 Check)
+            if (acks >= 2) {
+                res.status = 200;
+                res.set_content("Data Saved Successfully! (Quorum: 2/2 Reached)", "text/plain");
+                std::cout << "[Quorum] SUCCESS: W=2 reached.\n" << std::endl;
+            } else {
+                // THE BIG MOVE: Rollback (Agar backup fail hua toh local se bhi hata do)
+                std::cout << "[Quorum] ROLLBACK: Quorum failed. Reverting local write.\n" << std::endl;
+                storage->remove(key); // RAM se udhao
+                wal->appendLog("DELETE", key, ""); // WAL mein bhi delete dalo
+                
+                res.status = 503;
+                res.set_content("Error: Quorum Failed! Only 1 node available. Write rejected.", "text/plain");
+            }
         } 
         else {
-            // SCENARIO B: Maalik koi aur hai, request wahan PROXY (forward) karo
+            // PROXY LOGIC (Doosre node par forward karne ke liye)
             std::cout << "[Router] Proxying PUT request to owner: " << ownerNode << std::endl;
-            
             httplib::Client cli("http://" + ownerNode);
             httplib::Params params;
             params.emplace("key", key);
             params.emplace("value", value);
-            
-            // NAYA: Agar user ne TTL bheja hai, toh Proxy server ko bhi batao
-            if (ttl > 0) {
-                params.emplace("ttl", std::to_string(ttl));
-            }
+            if (ttl > 0) params.emplace("ttl", std::to_string(ttl));
             
             auto proxyRes = cli.Post("/put", params);
-            
             if (proxyRes) {
                 res.status = proxyRes->status;
                 res.set_content(proxyRes->body, "text/plain");
@@ -98,6 +103,19 @@ void Router::setupRoutes() {
                 res.set_content("Owner node is unreachable", "text/plain");
             }
         }
+    });
+
+    // 2. INTERNAL PUT API (For Replicas only - Bina Hash Ring / Quorum ke)
+    server.Post("/internal/put", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string key = req.get_param_value("key");
+        std::string value = req.get_param_value("value");
+        int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
+
+        wal->appendLog("PUT", key, value);
+        storage->put(key, value, ttl);
+
+        res.status = 200;
+        res.set_content("Internal Backup Saved", "text/plain");
     });
 
     // 3. GET API (/get) - Data read karna
