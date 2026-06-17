@@ -56,7 +56,7 @@ void WAL::recover(StorageEngine& engine) {
         if (action == "PUT") {
             engine.put(key, value);
         } 
-        else if (action == "REMOVE") {
+        else if (action == "DELETE") {
             engine.remove(key);
         }
     }

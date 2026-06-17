@@ -18,7 +18,7 @@ private:
     size_t capacity; // Database ki maximum limit
     
     // Core Data Structures
-    std::unordered_map<std::string, std::string> dataStore;
+    std::unordered_map<std::string, Record> dataStore;
     std::list<std::string> lruQueue;
     std::unordered_map<std::string, std::list<std::string>::iterator> lruMap;
     
@@ -39,7 +39,7 @@ public:
     ~StorageEngine();
 
     // Core Functions
-    void put(const std::string& key, const std::string& value);
+    void put(const std::string& key, const std::string& value, int ttl_seconds = 0);
     
     // std::optional use kar rahe hain taaki agar data na mile toh null return kar sakein
     std::optional<std::string> get(const std::string& key);

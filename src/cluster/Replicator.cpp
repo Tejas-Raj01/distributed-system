@@ -38,3 +38,23 @@ void Replicator::forwardToReplica(const std::string& key, const std::string& val
 
     }).detach(); // detach() main thread ko block nahi hone deta. Yeh background mein akele poora hoga.
 }
+
+void Replicator::forwardDelete(const std::string& key, const std::string& targetNode) {
+    // Bulletproof host aur port split logic
+    size_t colonPos = targetNode.find(':');
+    std::string host = targetNode.substr(0, colonPos);
+    int port = std::stoi(targetNode.substr(colonPos + 1));
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(1, 0);
+    cli.set_read_timeout(1, 0);
+
+    // Internal delete route par request bhejenge
+    auto res = cli.Delete("/internal/delete?key=" + key);
+    
+    if (res && res->status == 200) {
+        std::cout << "[Replicator] Successfully forwarded delete for key: " << key << " to " << targetNode << std::endl;
+    } else {
+        std::cerr << "[Replicator] Failed to forward delete for key: " << key << " to " << targetNode << std::endl;
+    }
+}

@@ -8,7 +8,6 @@ long long getCurrentTime() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// Constructor
 // Constructor: Thread ko start karo
 StorageEngine::StorageEngine(size_t max_capacity) : capacity(max_capacity), is_running(true) {
     cleanup_thread = std::thread(&StorageEngine::cleanupTask, this);
@@ -36,6 +35,7 @@ void StorageEngine::cleanupTask() {
             // Agar expiry_time 0 se bada hai aur current time se chota ho gaya hai (Expire ho gaya)
             if (it->second.expiry_time > 0 && it->second.expiry_time < now) {
                 // LRU list aur Map dono se udao
+                std::cout << "[TTL] Key expired and evicted: " << it->first << std::endl;
                 lruQueue.erase(lruMap[it->first]);
                 lruMap.erase(it->first);
                 it = dataStore.erase(it); // Safe deletion while iterating
@@ -50,70 +50,72 @@ void StorageEngine::cleanupTask() {
 void StorageEngine::evictOldest() {
     if (lruQueue.empty()) return;
     
-    // Queue ke last mein sabse purani key hoti hai
     std::string oldest_key = lruQueue.back();
-    lruQueue.pop_back();       // List se delete kiya
-    lruMap.erase(oldest_key);  // Iterator map se delete kiya
-    dataStore.erase(oldest_key); // Asli data store se delete kiya
+    lruQueue.pop_back();       
+    lruMap.erase(oldest_key);  
+    dataStore.erase(oldest_key); 
 }
 
-// PUT Operation
-void StorageEngine::put(const std::string& key, const std::string& value) {
-    // Exclusive Write-Lock: Koi aur read/write nahi kar sakta
+// FIX 1: PUT Operation mein ttl_seconds add kiya aur Record struct use kiya
+void StorageEngine::put(const std::string& key, const std::string& value, int ttl_seconds) {
     std::unique_lock<std::shared_mutex> lock(rw_lock);
 
-    // Agar key pehle se exist karti hai, toh value update karo aur usko naya (recent) banao
+    long long expiry = 0;
+    if (ttl_seconds > 0) {
+        expiry = getCurrentTime() + ttl_seconds;
+    }
+
     if (dataStore.find(key) != dataStore.end()) {
-        dataStore[key] = value;
-        lruQueue.erase(lruMap[key]); // Purani position se hatao
-        lruQueue.push_front(key);    // Sabse aage lagao
-        lruMap[key] = lruQueue.begin(); // Nayi position save karo
+        dataStore[key] = {value, expiry}; // NAYA: String ki jagah Record save ho raha hai
+        lruQueue.erase(lruMap[key]); 
+        lruQueue.push_front(key);    
+        lruMap[key] = lruQueue.begin(); 
         return;
     }
 
-    // Nayi key insert karne se pehle check karo ki memory full toh nahi
     if (dataStore.size() >= capacity) {
         evictOldest();
     }
 
-    // Naya data insert karo aur usko recently used mark karo
-    dataStore[key] = value;
+    dataStore[key] = {value, expiry}; // NAYA: String ki jagah Record save ho raha hai
     lruQueue.push_front(key);
     lruMap[key] = lruQueue.begin();
 }
 
-// GET Operation
+// FIX 2: GET Operation mein Lazy eviction check kiya aur Record se .value nikala
 std::optional<std::string> StorageEngine::get(const std::string& key) {
-    // NOTE: Yahan 'shared_lock' nahi laga sakte kyunki hum LRU list ko modify kar rahe hain.
-    // Isliye Exclusive Lock use karna padega data safety ke liye.
     std::unique_lock<std::shared_mutex> lock(rw_lock);
 
     if (dataStore.find(key) == dataStore.end()) {
-        return std::nullopt; // Key nahi mili
+        return std::nullopt; 
     }
 
-    // Data mil gaya, ab isko LRU list mein sabse aage (top) laana hai
+    // Lazy Eviction: Agar background thread se pehle get call ho gaya, check expire time
+    if (dataStore[key].expiry_time > 0 && dataStore[key].expiry_time < getCurrentTime()) {
+        lruQueue.erase(lruMap[key]);
+        lruMap.erase(key);
+        dataStore.erase(key);
+        return std::nullopt; // Expire ho chuka hai
+    }
+
     lruQueue.erase(lruMap[key]);
     lruQueue.push_front(key);
     lruMap[key] = lruQueue.begin();
 
-    return dataStore[key];
+    return dataStore[key].value; // NAYA: dataStore[key] ek Record hai, hum usme se .value return kar rahe hain
 }
 
 // REMOVE Operation
 bool StorageEngine::remove(const std::string& key) {
-    // Exclusive Write-Lock
     std::unique_lock<std::shared_mutex> lock(rw_lock);
 
     if (dataStore.find(key) == dataStore.end()) {
-        return false; // Delete karne ke liye kuch nahi mila
+        return false; 
     }
 
-    // Data aur uske saare LRU trackers delete kar do
     lruQueue.erase(lruMap[key]);
     lruMap.erase(key);
     dataStore.erase(key);
     
     return true;
 }
-    
