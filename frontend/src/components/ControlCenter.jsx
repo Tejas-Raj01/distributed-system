@@ -10,18 +10,41 @@ const computeHashAngle = (str) => {
   return Number(hash % 360n);
 };
 
+// ⏱️ NAYA: Helper function to pause execution (Let the browser breathe)
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const ControlCenter = () => {
   const [keyInput, setKeyInput] = useState("");
   const [valInput, setValInput] = useState("");
   const [gossipPulse, setGossipPulse] = useState(false);
-  
-  // 🎚️ NAYA STATE: Slider ki value track karne ke liye (Default 150)
   const [injectCount, setInjectCount] = useState(150);
 
   const { clusterState, addLog, addData, removeData, toggleNodeStatus, addNode } = useStore();
 
+  // ==========================================
+  // 🔄 HEALTH POLLING (Live Status sync with Backend)
+  // ==========================================
   useEffect(() => {
-    const gossipTimer = setInterval(() => setGossipPulse(prev => !prev), 1500);
+    const pollClusterHealth = async () => {
+      try {
+        // Yeh endpoint tab kaam karega jab hum C++ mein /admin/status banayenge
+        // Abhi ke liye yeh try-catch mein safe rakha hai taaki UI crash na ho
+        const res = await fetch('http://127.0.0.1:8080/admin/status');
+        if (res.ok) {
+          const liveNodesData = await res.json();
+          // Logic: Agar backend bole 8084 dead hai, toh Zustand mein update karo
+          // (Backend implementation ke baad yeh exact sync karega)
+        }
+      } catch (err) {
+        // Silent catch: Agar polling fail ho, UI error spam na kare
+      }
+    };
+
+    const gossipTimer = setInterval(() => {
+      setGossipPulse(prev => !prev);
+      pollClusterHealth(); // Har 2 second mein ping karo
+    }, 2000);
+
     return () => clearInterval(gossipTimer);
   }, []);
 
@@ -75,29 +98,47 @@ const ControlCenter = () => {
     } catch (err) { addLog("[CRITICAL] Backend unreachable."); }
   };
 
-  // 🚀 UPDATE: Ab loop 1000 ki jagah injectCount tak chalega
+  // ==========================================
+  // 🚀 HEAVY LIFTING: Chunked Injector (No Browser Freeze)
+  // ==========================================
   const injectStressTest = async () => {
-    addLog(`[CHAOS] 🚀 Injecting ${injectCount} random keys into cluster...`);
-    let promises = [];
+    addLog(`[CHAOS] 🚀 Starting Injection of ${injectCount} keys...`);
+    
+    const CHUNK_SIZE = 100; // Ek baar mein sirf 100 requests jayengi
 
-    for(let i=0; i<injectCount; i++) {
-      const randomKey = `user_${Math.floor(Math.random() * 999999)}`;
-      const randomVal = `data_${i}`;
-      const calculatedAngle = computeHashAngle(randomKey);
+    for (let i = 0; i < injectCount; i += CHUNK_SIZE) {
+      let promises = [];
+      const currentChunkSize = Math.min(CHUNK_SIZE, injectCount - i);
 
-      const req = fetch('http://127.0.0.1:8080/put', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `key=${randomKey}&value=${randomVal}`
-      }).then(res => res.json()).then(data => {
-        if (data.status === "success") addData(randomKey, calculatedAngle); 
-      }).catch(err => {});
+      for (let j = 0; j < currentChunkSize; j++) {
+        const randomKey = `user_${Math.floor(Math.random() * 999999)}`;
+        const randomVal = `data_${i + j}`;
+        const calculatedAngle = computeHashAngle(randomKey);
+
+        const req = fetch('http://127.0.0.1:8080/put', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `key=${randomKey}&value=${randomVal}`
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === "success") addData(randomKey, calculatedAngle); 
+        }).catch(err => {});
+        
+        promises.push(req);
+      }
       
-      promises.push(req);
+      // Intezaar karo jab tak yeh 100 keys poori na ho jayein
+      await Promise.all(promises);
+      addLog(`[NETWORK] Processed Chunk: ${i + currentChunkSize} / ${injectCount}`);
+      
+      // ⏱️ Agla chunk bhejne se pehle 200ms ruko (UI ko render hone ka time milega)
+      if (i + currentChunkSize < injectCount) {
+        await delay(200); 
+      }
     }
     
-    await Promise.all(promises);
-    addLog(`[SUCCESS] ${injectCount} Keys injected & rendered via Canvas!`);
+    addLog(`[SUCCESS] 🔥 All ${injectCount} Keys injected seamlessly!`);
   };
 
   const handleRebalance = async () => {
@@ -146,7 +187,6 @@ const ControlCenter = () => {
       <div className="flex flex-col gap-3 mt-8">
         <h2 className="text-purple-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-purple-900/50 pb-2">Chaos & Automation</h2>
         
-        {/* 🎚️ NAYA: Injection Volume Slider */}
         <div className="flex flex-col gap-1 mt-1 mb-2">
           <div className="flex justify-between items-center text-[10px] text-purple-300 font-bold uppercase tracking-wider">
             <span>Injection Volume</span>
@@ -154,9 +194,9 @@ const ControlCenter = () => {
           </div>
           <input 
             type="range" 
-            min="10" 
+            min="100" 
             max="2000" 
-            step="10" 
+            step="100" 
             value={injectCount} 
             onChange={(e) => setInjectCount(Number(e.target.value))} 
             className="w-full accent-purple-500 cursor-pointer"
@@ -164,7 +204,7 @@ const ControlCenter = () => {
         </div>
 
         <button onClick={injectStressTest} className="bg-purple-600/20 border border-purple-500/50 text-purple-300 px-4 py-3 rounded font-bold hover:bg-purple-600/40 transition text-sm">
-          🚀 INJECT {injectCount} KEYS
+          🚀 INJECT KEYS (Chunked)
         </button>
         <button onClick={handleRebalance} className="bg-emerald-600/20 border border-emerald-500/50 text-emerald-400 px-4 py-3 rounded font-bold hover:bg-emerald-600/40 transition text-sm">⚖️ REBALANCE CLUSTER</button>
         <button onClick={handleAddNode} className="bg-amber-600/20 border border-amber-500/50 text-amber-400 px-4 py-3 rounded font-bold hover:bg-amber-600/40 transition text-sm">➕ CONNECT NODE 8086</button>
