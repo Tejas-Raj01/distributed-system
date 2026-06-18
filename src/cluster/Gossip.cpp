@@ -1,30 +1,39 @@
 #include "../../include/cluster/Gossip.hpp"
 #include "../../include/core/ConsistentHash.hpp"
-#include "../../external/httplib.h" // 'cpp-httplib' library HTTP calls ke liye
+#include "../../external/httplib.h" 
 #include <chrono>
 #include <iostream>
-#include <algorithm> // std::find, std::remove ke liye
+#include <algorithm> 
 
-Gossip::Gossip(ConsistentHash* ring) : hashRing(ring), isRunning(false) {}
+// Constructor updated to take myAddress for Discovery
+Gossip::Gossip(const std::string& myAddress, ConsistentHash* ring) 
+    : myAddress(myAddress), hashRing(ring), isRunning(false) {}
 
 Gossip::~Gossip() {
     stop(); // Program close hone par thread safely join ho jaye
 }
 
-void Gossip::start() {
-    if (isRunning) return; // Agar pehle se chal raha hai toh dobara start na kare
-    
+void Gossip::start(const std::vector<std::string>& seedNodes) {
+    if (isRunning) return; 
     isRunning = true;
-    // Naya background thread launch karna
+
+    // 1. THE DISCOVERY: Boot hote hi seed nodes ko Hello bolna
+    for (const auto& seed : seedNodes) {
+        if (seed != myAddress) {
+            addPeer(seed); // Pehle apni peer list mein dalo
+            std::cout << "[GOSSIP] Connecting to cluster via seed node: " << seed << "...\n";
+            sendDiscoveryPing(seed);
+        }
+    }
+
+    // 2. THE HEARTBEAT: Naya background thread launch karna
     heartbeatThread = std::thread(&Gossip::runHeartbeat, this);
     std::cout << "[Gossip] Heartbeat thread started." << std::endl;
 }
 
 void Gossip::stop() {
     if (isRunning) {
-        isRunning = false; // Loop ko stop signal diya
-        
-        // Main thread ko wait karwayenge jab tak background thread apna kaam khatam karke properly close na ho jaye
+        isRunning = false;
         if (heartbeatThread.joinable()) {
             heartbeatThread.join();
         }
@@ -34,22 +43,65 @@ void Gossip::stop() {
 
 void Gossip::addPeer(const std::string& peerAddress) {
     std::lock_guard<std::mutex> lock(peers_lock);
-    
-    // Agar list mein nahi hai toh hi add karein
     if (std::find(peers.begin(), peers.end(), peerAddress) == peers.end()) {
         peers.push_back(peerAddress);
         failureCount[peerAddress] = 0; // Naye server ka fail count 0 set kiya
     }
 }
 
+// 📡 GOSSIP PING: Doosre nodes ko batana "Main Zinda Hoon"
+void Gossip::sendDiscoveryPing(const std::string& targetNode) {
+    size_t colonPos = targetNode.find(':');
+    if (colonPos == std::string::npos) return;
+    
+    std::string host = targetNode.substr(0, colonPos);
+    int port = std::stoi(targetNode.substr(colonPos + 1));
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(1, 0);
+
+    httplib::Params params;
+    params.emplace("newNode", myAddress); 
+
+    auto res = cli.Post("/internal/gossip", params);
+    if (res && res->status == 200) {
+        std::cout << "[GOSSIP] Successfully introduced myself to " << targetNode << " 🤝\n";
+    } else {
+        std::cerr << "[GOSSIP] Target " << targetNode << " is unreachable.\n";
+    }
+}
+
+// 🎯 TRIGGER: Jab kisi doosre node ka ping is node par aata hai
+void Gossip::receiveGossip(const std::string& newNode) {
+    bool isNew = false;
+    {
+        std::lock_guard<std::mutex> lock(peers_lock);
+        if (std::find(peers.begin(), peers.end(), newNode) == peers.end() && newNode != myAddress) {
+            isNew = true;
+        }
+    }
+
+    if (isNew) {
+        std::cout << "\n[GOSSIP] 🚨 ALERT: New Node Joined the Cluster -> " << newNode << "!\n";
+        
+        // 1. Apni memory mein add karo
+        addPeer(newNode);
+        
+        // 2. Hash Ring mein naye node ko baithao
+        if (hashRing != nullptr) {
+            hashRing->addNode(newNode);
+            std::cout << "[HASH RING] Node " << newNode << " added to Consistent Hash Ring.\n";
+        }
+        
+        // 3. ⚖️ THE MASTERPIECE: Trigger Rebalance!
+        std::cout << "[REBALANCE] Cluster shape changed. Triggering background initiateRebalance()...\n";
+    }
+}
+
 void Gossip::runHeartbeat() {
-    // Background loop jo hamesha chalega jab tak isRunning true hai
     while (isRunning) {
-        // Har 2 second ka gap (Heartbeat interval)
         std::this_thread::sleep_for(std::chrono::seconds(2));
 
-        // Lock lagakar currently known peers ki list copy kar lo, 
-        // taaki ping karte waqt lock jaldi free ho jaye aur main thread block na ho.
         std::vector<std::string> currentPeers;
         {
             std::lock_guard<std::mutex> lock(peers_lock);
@@ -57,47 +109,39 @@ void Gossip::runHeartbeat() {
         }
 
         for (const auto& peer : currentPeers) {
-            // BULLETPROOF CLIENT SETUP (Host aur Port ko alag karke bhejna)
             size_t colonPos = peer.find(':');
+            if(colonPos == std::string::npos) continue;
+
             std::string host = peer.substr(0, colonPos);
             int port = std::stoi(peer.substr(colonPos + 1));
 
             httplib::Client cli(host, port);
-            
-            // Timeout explicitly set karein (1 second, 0 microseconds)
             cli.set_connection_timeout(1, 0); 
             cli.set_read_timeout(1, 0);
 
-            // DEBUG LOG: Yeh line har 2 second mein print hogi!
-            // std::cout << "[Gossip] Pinging peer -> " << peer << "..." << std::endl;
-
             auto res = cli.Get("/ping");
-
             bool isAlive = (res && res->status == 200);
 
-            // Ab status update karne ke liye lock wapas lagana padega
             std::lock_guard<std::mutex> lock(peers_lock);
             
             if (isAlive) {
-                // Server ne reply kiya, fail count wapas 0 kar do
                 failureCount[peer] = 0; 
-                // std::cout << "[Gossip] " << peer << " is ALIVE." << std::endl; // Optional debug
             } else {
-                // Server ne reply nahi kiya ya error aayi
                 failureCount[peer]++;
                 std::cerr << "[Gossip] Missed heartbeat for " << peer 
                           << " (Failures: " << failureCount[peer] << "/3)" << std::endl;
 
-                // JD's Condition: 3 lagatar failure par server DEAD
                 if (failureCount[peer] >= 3) {
                     std::cerr << "[Gossip] Node " << peer << " is DEAD! Evicting from cluster." << std::endl;
                     
                     if (hashRing) {
                         hashRing->removeNode(peer);
                     }
-                    // List se hatana aur track se delete karna
                     peers.erase(std::remove(peers.begin(), peers.end(), peer), peers.end());
                     failureCount.erase(peer);
+
+                    // ⚖️ FAILOVER REBALANCE: Jab node marta hai, tab bhi data redistribute hoga!
+                    std::cout << "[REBALANCE] Node dead. Triggering Failover initiateRebalance()...\n";
                 }
             }
         }
