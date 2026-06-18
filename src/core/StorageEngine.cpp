@@ -57,9 +57,9 @@ void StorageEngine::evictOldest() {
     dataStore.erase(oldest_key); 
 }
 
-// FIX 1: PUT Operation mein ttl_seconds add kiya aur Record struct use kiya
+// PUT Operation mein ttl_seconds add kiya aur Record struct use kiya
 void StorageEngine::put(const std::string& key, const std::string& value, int ttl_seconds) {
-    std::unique_lock<std::shared_mutex> lock(rw_lock);
+    std::unique_lock<std::shared_mutex> lock(rw_lock); // Write Lock
 
     long long expiry = 0;
     if (ttl_seconds > 0) {
@@ -67,7 +67,7 @@ void StorageEngine::put(const std::string& key, const std::string& value, int tt
     }
 
     if (dataStore.find(key) != dataStore.end()) {
-        dataStore[key] = {value, expiry}; // NAYA: String ki jagah Record save ho raha hai
+        dataStore[key] = {value, expiry}; 
         lruQueue.erase(lruMap[key]); 
         lruQueue.push_front(key);    
         lruMap[key] = lruQueue.begin(); 
@@ -78,13 +78,14 @@ void StorageEngine::put(const std::string& key, const std::string& value, int tt
         evictOldest();
     }
 
-    dataStore[key] = {value, expiry}; // NAYA: String ki jagah Record save ho raha hai
+    dataStore[key] = {value, expiry}; 
     lruQueue.push_front(key);
     lruMap[key] = lruQueue.begin();
 }
 
-// FIX 2: GET Operation mein Lazy eviction check kiya aur Record se .value nikala
+// GET Operation mein Lazy eviction check kiya aur Record se .value nikala
 std::optional<std::string> StorageEngine::get(const std::string& key) {
+    // Unique lock zaroori hai kyunki hum LRU queue modify karte hain (push_front)
     std::unique_lock<std::shared_mutex> lock(rw_lock);
 
     if (dataStore.find(key) == dataStore.end()) {
@@ -103,12 +104,12 @@ std::optional<std::string> StorageEngine::get(const std::string& key) {
     lruQueue.push_front(key);
     lruMap[key] = lruQueue.begin();
 
-    return dataStore[key].value; // NAYA: dataStore[key] ek Record hai, hum usme se .value return kar rahe hain
+    return dataStore[key].value;
 }
 
 // REMOVE Operation
 bool StorageEngine::remove(const std::string& key) {
-    std::unique_lock<std::shared_mutex> lock(rw_lock);
+    std::unique_lock<std::shared_mutex> lock(rw_lock); // Write Lock
 
     if (dataStore.find(key) == dataStore.end()) {
         return false; 
@@ -124,7 +125,7 @@ bool StorageEngine::remove(const std::string& key) {
 // GET ALL DATA (Rebalancing ke liye)
 std::vector<std::pair<std::string, std::string>> StorageEngine::getAllData() {
     // Shared lock lagayenge taaki jab hum data read kar rahe hon, 
-    // toh baaki log bhi read kar sakein (System block na ho)
+    // toh baaki log bhi read kar sakein bina block hue
     std::shared_lock<std::shared_mutex> lock(rw_lock);
     
     std::vector<std::pair<std::string, std::string>> all_data;

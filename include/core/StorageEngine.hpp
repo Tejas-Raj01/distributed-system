@@ -5,8 +5,8 @@
 #include <shared_mutex>
 #include <mutex>
 #include <optional>
-#include <thread>   // NAYA: Background thread ke liye
-#include <atomic>   // NAYA: Thread ko safely stop karne ke liye
+#include <thread>   // Background thread ke liye
+#include <atomic>   // Thread ko safely stop karne ke liye
 #include <vector>
 
 struct Record {
@@ -22,12 +22,11 @@ private:
     std::unordered_map<std::string, Record> dataStore;
     std::list<std::string> lruQueue;
     std::unordered_map<std::string, std::list<std::string>::iterator> lruMap;
-    
 
-    // Reader-Writer Lock
+    // Reader-Writer Lock (Thread Safety)
     mutable std::shared_mutex rw_lock;
  
-    // NAYA: Background Garbage Collector
+    // Background Garbage Collector
     std::atomic<bool> is_running;
     std::thread cleanup_thread;
 
@@ -36,18 +35,15 @@ private:
     void cleanupTask(); // Thread jo purane data ko delete karega
 
 public:
-    // NAYA: Data rebalancing ke liye saara data nikalne ka function
-    std::vector<std::pair<std::string, std::string>> getAllData();
-    
     // Constructor jisme memory limit set hogi
     StorageEngine(size_t max_capacity);
     ~StorageEngine();
 
     // Core Functions
     void put(const std::string& key, const std::string& value, int ttl_seconds = 0);
-    
-    // std::optional use kar rahe hain taaki agar data na mile toh null return kar sakein
     std::optional<std::string> get(const std::string& key);
-    
     bool remove(const std::string& key);
+
+    // NAYA: Data rebalancing ke liye saara data nikalne ka function
+    std::vector<std::pair<std::string, std::string>> getAllData();
 };
