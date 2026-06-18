@@ -1,14 +1,6 @@
 import { useState, useEffect } from 'react';
 import useStore from '../store/useStore';
-
-const computeHashAngle = (str) => {
-  let hash = 14695981039346656037n;
-  for (let i = 0; i < str.length; i++) {
-      hash ^= BigInt(str.charCodeAt(i));
-      hash = (hash * 1099511628211n) % 18446744073709551616n;
-  }
-  return Number(hash % 360n);
-};
+import { apiService } from '../services/api'; // 📡 THE MISSING IMPORT
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -17,125 +9,98 @@ const ControlCenter = () => {
   const [valInput, setValInput] = useState("");
   const [gossipPulse, setGossipPulse] = useState(false);
   const [injectCount, setInjectCount] = useState(1000); 
-
-  // ⚖️ NAYA: Config State (N, W, R)
   const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
 
+  // ZUSTAND: Notice ki humne yahan se addData aur removeData hata diya hai!
   const { 
     clusterState, isInjecting, isBackendOffline,
-    addLog, addData, removeData, toggleNodeStatus, addNode, setIsInjecting, setIsBackendOffline 
+    addLog, toggleNodeStatus, setIsInjecting, setIsBackendOffline 
   } = useStore();
 
+  // ==========================================
+  // 💓 PILLAR 3: SERVER-AUTHORITATIVE HEARTBEAT
+  // ==========================================
   useEffect(() => {
-    const checkBackendHealth = async () => { setIsBackendOffline(false); };
-    checkBackendHealth();
-    const gossipTimer = setInterval(() => {
-      setGossipPulse(prev => !prev);
-      checkBackendHealth(); 
-    }, 2000);
-    return () => clearInterval(gossipTimer);
+    const syncLiveState = async () => {
+      try {
+        const data = await apiService.fetchClusterState();
+        
+        // C++ backend hi angle aur data bhejega, React sirf paint karega
+        useStore.setState({
+          clusterState: data.nodes || [],
+          dataRing: data.dataMap || []
+        });
+        setIsBackendOffline(false);
+      } catch (err) {
+        setIsBackendOffline(true);
+      }
+    };
+
+    const heartbeatTimer = setInterval(syncLiveState, 1000);
+    return () => clearInterval(heartbeatTimer);
   }, [setIsBackendOffline]);
 
+  // Visual Pulse Timer
+  useEffect(() => {
+    const pulseTimer = setInterval(() => setGossipPulse(prev => !prev), 2000);
+    return () => clearInterval(pulseTimer);
+  }, []);
+
   // ==========================================
-  // ⚖️ CONFIG SYNC (API CALL)
+  // ⚖️ PILLAR 1: CONFIG SYNC
   // ==========================================
   const handleUpdateConfig = async () => {
     if (isInjecting || isBackendOffline) return;
     addLog(`[CONFIG] Syncing Rules with C++: N=${config.N}, W=${config.W}, R=${config.R}`);
     try {
-      const res = await fetch('http://127.0.0.1:8080/admin/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
-      });
-      if (res.ok) addLog("[CONFIG] Success: C++ Memory Updated!");
-      else addLog("[ERROR] Failed to update config on server.");
+      await apiService.updateConfig(config);
+      addLog("[CONFIG] Success: C++ Memory Updated!");
     } catch (err) {
       addLog("[CRITICAL] Config sync failed. Backend unreachable.");
     }
   };
 
   // ==========================================
-  // 🛡️ STRICT QUORUM ERROR HANDLING (PUT)
+  // 📡 PILLAR 2: DECOUPLED CRUD OPERATIONS
   // ==========================================
   const handlePut = async () => {
     if (!keyInput || !valInput || isInjecting || isBackendOffline) return;
-    const currentKey = keyInput; 
-    const calculatedAngle = computeHashAngle(currentKey);
-
+    addLog(`[ROUTER] Sending PUT Request: '${keyInput}'`);
     try {
-      addLog(`[ROUTER] Sending PUT Request: '${keyInput}'`);
-      const response = await fetch('http://127.0.0.1:8080/put', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `key=${keyInput}&value=${valInput}`
-      });
-      
-      // Agar Quorum fail hua (e.g., W=3 but got 2)
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        addLog(`[ERROR] Write Quorum Failed: ${errorData.message || "Not enough nodes alive."}`);
-        return; // Dot draw nahi hoga!
-      }
-
-      const data = await response.json();
-      if (data.status === "success") {
-        addLog(`[QUORUM] SUCCESS: Key '${currentKey}' saved.`);
-        addData(currentKey, calculatedAngle); 
-      }
+      await apiService.putData(keyInput, valInput);
+      addLog(`[QUORUM] SUCCESS: Key '${keyInput}' saved.`);
+      // Notice: Yahan addData() call nahi ho raha, Heartbeat apne aap UI update karega!
       setKeyInput(""); setValInput("");
     } catch (err) { 
-      setIsBackendOffline(true);
-      addLog("[CRITICAL] Connection lost during PUT operation."); 
+      addLog(`[ERROR] ${err.message}`); 
     }
   };
 
-  // ==========================================
-  // ⏱️ STALE READS & LATENCY TRACKER (GET)
-  // ==========================================
   const handleGet = async () => {
     if (!keyInput || isInjecting || isBackendOffline) return;
+    addLog(`[ROUTER] Fetching data for Key: '${keyInput}'...`);
+    const startTime = performance.now();
     try {
-      addLog(`[ROUTER] Fetching data for Key: '${keyInput}'...`);
-      
-      // Timer Start
-      const startTime = performance.now();
-      
-      const response = await fetch(`http://127.0.0.1:8080/get?key=${keyInput}`);
-      
-      // Timer Stop
-      const endTime = performance.now();
-      const latency = (endTime - startTime).toFixed(2); // ms mein
-      
-      if (response.ok) {
-        const textData = await response.text();
-        const readType = config.R === 1 ? "Eventual" : "Strong";
-        addLog(`[STORAGE] Found Value: '${textData}' | Latency: ${latency}ms (${readType})`);
-        setValInput(textData);
-      } else { 
-        addLog(`[ERROR] Failed to fetch. Quorum not met or key missing. Latency: ${latency}ms`); 
-      }
+      const textData = await apiService.getData(keyInput);
+      const latency = (performance.now() - startTime).toFixed(2);
+      const readType = config.R === 1 ? "Eventual" : "Strong";
+      addLog(`[STORAGE] Found Value: '${textData}' | Latency: ${latency}ms (${readType})`);
+      setValInput(textData);
     } catch (err) { 
-      setIsBackendOffline(true);
-      addLog("[CRITICAL] Connection lost during GET operation."); 
+      const latency = (performance.now() - startTime).toFixed(2);
+      addLog(`[ERROR] ${err.message} | Latency: ${latency}ms`); 
     }
   };
 
   const handleDelete = async () => {
     if (!keyInput || isInjecting || isBackendOffline) return;
+    addLog(`[ROUTER] Sending DELETE Request for: '${keyInput}'...`);
     try {
-      addLog(`[ROUTER] Sending DELETE Request for: '${keyInput}'...`);
-      const response = await fetch(`http://127.0.0.1:8080/delete?key=${keyInput}`, { method: 'DELETE' });
-      if (response.ok) {
-        addLog(`[QUORUM] SUCCESS: Key '${keyInput}' deleted.`);
-        removeData(keyInput); 
-        setKeyInput(""); setValInput("");
-      } else {
-        addLog(`[ERROR] Delete Quorum Failed.`);
-      }
+      await apiService.deleteData(keyInput);
+      addLog(`[QUORUM] SUCCESS: Key '${keyInput}' deleted.`);
+      setKeyInput(""); setValInput("");
     } catch (err) { 
-      setIsBackendOffline(true);
-      addLog("[CRITICAL] Connection lost during DELETE."); 
+      addLog(`[ERROR] ${err.message}`); 
     }
   };
 
@@ -143,31 +108,15 @@ const ControlCenter = () => {
     if (isInjecting || isBackendOffline) return;
     setIsInjecting(true); 
     addLog(`[CHAOS] 🚀 Blasting C++ Cluster with concurrent network bursts...`);
+    
     const CHUNK_SIZE = 100; 
-
     for (let i = 0; i < injectCount; i += CHUNK_SIZE) {
       let promises = [];
       const currentChunkSize = Math.min(CHUNK_SIZE, injectCount - i);
 
       for (let j = 0; j < currentChunkSize; j++) {
         const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
-        const randomVal = "test_data";
-        const calculatedAngle = computeHashAngle(randomKey);
-
-        const req = fetch('http://127.0.0.1:8080/put', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `key=${randomKey}&value=${randomVal}`
-        })
-        .then(res => {
-          if (!res.ok) throw new Error("Drop");
-          return res.json();
-        })
-        .then(data => {
-          if (data.status === "success") addData(randomKey, calculatedAngle); 
-        })
-        .catch(() => {});
-        promises.push(req);
+        promises.push(apiService.putData(randomKey, "test_data").catch(()=>{}));
       }
       
       await Promise.allSettled(promises);
@@ -176,7 +125,7 @@ const ControlCenter = () => {
     }
     
     setIsInjecting(false); 
-    addLog(`[SUCCESS] 🔥 Pipeline stress test finished for ${injectCount} keys.`);
+    addLog(`[SUCCESS] 🔥 Pipeline stress test finished.`);
   };
 
   const handleRebalance = async () => {
@@ -191,13 +140,7 @@ const ControlCenter = () => {
 
   const handleAddNode = () => {
     if (isInjecting || isBackendOffline) return;
-    const newNode = { id: 8086, angle: 60, color: "#f59e0b", status: "alive" };
-    if (clusterState.find(n => n.id === newNode.id)) {
-      addLog("[WARNING] Node 8086 is already connected.");
-      return;
-    }
-    addLog("[INFO] ➕ New Node 8086 added to UI ring structure.");
-    addNode(newNode); 
+    addLog("[INFO] To connect Node 8086, boot up the C++ backend on port 8086!");
   };
 
   const handleToggleStatus = async (id) => {
@@ -205,11 +148,12 @@ const ControlCenter = () => {
     toggleNodeStatus(id); 
     const node = clusterState.find(n => n.id === id);
     const nextStatus = node.status === "alive" ? "DEAD" : "ALIVE";
+    
     addLog(`[GOSSIP] Node ${id} marked as ${nextStatus} in UI.`);
     if (nextStatus === "DEAD") {
       try {
         addLog(`[ADMIN] Sending remote KILL signal to port ${id}...`);
-        await fetch(`http://127.0.0.1:${id}/admin/kill`, { method: 'POST' });
+        await apiService.killNode(id);
         addLog(`[SUCCESS] Node ${id} gracefully shut down.`);
       } catch (err) {
         addLog(`[NETWORK] Node ${id} unreachable. Assume already dead.`);
@@ -233,9 +177,7 @@ const ControlCenter = () => {
         </div>
       )}
 
-      {/* ==========================================
-          ⚖️ CLUSTER CONFIGURATION (N, W, R)
-          ========================================== */}
+      {/* ⚖️ CLUSTER CONFIGURATION */}
       <div className={`bg-slate-950 p-4 rounded border border-slate-700 mt-6 transition-opacity ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h3 className="text-amber-400 font-bold text-[10px] uppercase tracking-widest mb-3">Cluster Config (Quorum)</h3>
         <div className="flex gap-2">
@@ -252,11 +194,7 @@ const ControlCenter = () => {
             </div>
           ))}
         </div>
-        <button 
-          disabled={isInjecting || isBackendOffline}
-          onClick={handleUpdateConfig} 
-          className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition"
-        >
+        <button disabled={isInjecting || isBackendOffline} onClick={handleUpdateConfig} className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition">
           APPLY CONFIG TO C++
         </button>
       </div>
@@ -309,10 +247,10 @@ const ControlCenter = () => {
         <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
         {clusterState.map(node => (
           <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
-            <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color}, transparent)`}}></div>
+            <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
             <div className="flex items-center gap-2 relative z-10">
-              <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? node.color : "#334155" }}></span>
-              <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {node.id}</span>
+              <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
+              <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {node.id || node.port}</span>
             </div>
             <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
               {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
