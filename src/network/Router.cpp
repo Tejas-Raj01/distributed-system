@@ -17,27 +17,34 @@ Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch
 // APIs aur Unka Logic map karna
 void Router::setupRoutes() {
     
+    // 1. Handle Pre-flight OPTIONS requests (Browser real request se pehle yeh bhejta hai)
+    server.Options("(.*)", [](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.status = 200;
+    });
+
     // 1. GOSSIP HEARTBEAT API (/ping)
     server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
         res.status = 200;
         res.set_content("PONG", "text/plain");
     });
 
-    // 1.5 REPLICATION API (Backup receive karne ke liye)
+    // 1.5 REPLICATION API
     server.Post("/internal/replicate", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
-        
-        // Backup ko chupchaap apni RAM aur Log mein save kar lo
         wal->appendLog("PUT", key, value);
         storage->put(key, value);
-        
-        std::cout << "[Replicator] Backup received & saved for key: " << key << std::endl;
         res.status = 200;
     });
 
-    // 1. PUBLIC PUT API (With Strict Quorum W=2 & React-Friendly JSON Response)
+    // 1. PUBLIC PUT API (With CORS & JSON)
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
+        // MANUALLY ADDED CORS HEADER HERE
+        res.set_header("Access-Control-Allow-Origin", "*");
+
         if (!req.has_param("key") || !req.has_param("value")) {
             res.status = 400;
             res.set_content(R"({"error": "Missing key or value"})", "application/json");
@@ -47,18 +54,13 @@ void Router::setupRoutes() {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
         int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
-
         std::string ownerNode = hashRing->getOwnerNode(key);
 
         if (ownerNode == myAddress) {
-            std::cout << "\n[Quorum] Processing Write Request for Key: " << key << std::endl;
-            
-            // STEP 1: Local RAM aur WAL mein save karo
             wal->appendLog("PUT", key, value);
             storage->put(key, value, ttl);
             int acks = 1; 
             
-            // STEP 2: Backup Node (Replica) ko data bhejo
             bool replicaAck = false;
             if (myAddress == "127.0.0.1:8080") {
                 replicaAck = replicator->forwardToReplica(key, value, "127.0.0.1:8082", ttl);
@@ -66,30 +68,18 @@ void Router::setupRoutes() {
                 replicaAck = replicator->forwardToReplica(key, value, "127.0.0.1:8080", ttl);
             }
 
-            if (replicaAck) {
-                acks++;
-            }
+            if (replicaAck) acks++;
 
-            // STEP 3: Quorum Logic (W=2 Check)
             if (acks >= 2) {
                 res.status = 200;
-                // FIX: React ke liye pure JSON response bheja
                 res.set_content(R"({"status": "success"})", "application/json");
-                std::cout << "[Quorum] SUCCESS: W=2 reached.\n" << std::endl;
             } else {
-                // ROLLBACK: Agar backup fail hua toh local se bhi hata do
-                std::cout << "[Quorum] ROLLBACK: Quorum failed. Reverting local write.\n" << std::endl;
                 storage->remove(key); 
                 wal->appendLog("DELETE", key, ""); 
-                
                 res.status = 503;
-                // FIX: React ke liye pure JSON error format
                 res.set_content(R"({"error": "Quorum Failed"})", "application/json");
             }
-        } 
-        else {
-            // PROXY LOGIC (Baki code waise hi rahega, owner node khud JSON return karega)
-            std::cout << "[Router] Proxying PUT request to owner: " << ownerNode << std::endl;
+        } else {
             httplib::Client cli("http://" + ownerNode);
             httplib::Params params;
             params.emplace("key", key);
@@ -99,7 +89,7 @@ void Router::setupRoutes() {
             auto proxyRes = cli.Post("/put", params);
             if (proxyRes) {
                 res.status = proxyRes->status;
-                res.set_content(proxyRes->body, "application/json"); // Content type updated
+                res.set_content(proxyRes->body, "application/json"); 
             } else {
                 res.status = 503;
                 res.set_content(R"({"error": "Owner node is unreachable"})", "application/json");
@@ -107,21 +97,22 @@ void Router::setupRoutes() {
         }
     });
 
-    // 2. INTERNAL PUT API (For Replicas only - Bina Hash Ring / Quorum ke)
+    // 2. INTERNAL PUT API
     server.Post("/internal/put", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
         int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
-
         wal->appendLog("PUT", key, value);
         storage->put(key, value, ttl);
-
         res.status = 200;
         res.set_content("Internal Backup Saved", "text/plain");
     });
 
-    // 3. GET API (/get) - Data read karna
+    // 3. GET API (/get)
     server.Get("/get", [this](const httplib::Request& req, httplib::Response& res) {
+        // MANUALLY ADDED CORS HEADER HERE
+        res.set_header("Access-Control-Allow-Origin", "*");
+
         if (!req.has_param("key")) {
             res.status = 400;
             res.set_content("Missing 'key'", "text/plain");
@@ -132,9 +123,7 @@ void Router::setupRoutes() {
         std::string ownerNode = hashRing->getOwnerNode(key);
 
         if (ownerNode == myAddress) {
-            // SCENARIO A: Mere paas hi data hai
             auto result = storage->get(key);
-            
             if (result.has_value()) {
                 res.status = 200;
                 res.set_content(result.value(), "text/plain");
@@ -142,14 +131,9 @@ void Router::setupRoutes() {
                 res.status = 404;
                 res.set_content("Key Not Found", "text/plain");
             }
-        } 
-        else {
-            // SCENARIO B: Data kisi aur ke paas hai, Request usko PROXY karo
-            std::cout << "[Router] Proxying GET request to owner: " << ownerNode << std::endl;
-            
+        } else {
             httplib::Client cli("http://" + ownerNode);
             auto proxyRes = cli.Get("/get?key=" + key);
-            
             if (proxyRes) {
                 res.status = proxyRes->status;
                 res.set_content(proxyRes->body, "text/plain");
@@ -160,8 +144,11 @@ void Router::setupRoutes() {
         }
     });
 
-    // 1. PUBLIC DELETE API (Client ke liye)
+    // PUBLIC DELETE API
     server.Delete("/delete", [this](const httplib::Request& req, httplib::Response& res) {
+        // MANUALLY ADDED CORS HEADER HERE
+        res.set_header("Access-Control-Allow-Origin", "*");
+
         std::string key = req.get_param_value("key");
         if (key.empty()) {
             res.status = 400;
@@ -169,14 +156,9 @@ void Router::setupRoutes() {
             return;
         }
 
-        // Local RAM se data delete karo
         bool isDeleted = storage->remove(key);
-
-        // WAL mein "DELETE" log karo taaki crash recovery ke baad data wapas na aa jaye
         wal->appendLog("DELETE", key, "");
 
-        // Replicator ko call karke baaki nodes se safaya karo
-        // Hardcoded replication mapping: 8080 ka backup 8082 hai, aur 8082 ka 8080
         if (myAddress == "127.0.0.1:8080") {
             replicator->forwardDelete(key, "127.0.0.1:8082");
         } else if (myAddress == "127.0.0.1:8082") {
@@ -192,22 +174,18 @@ void Router::setupRoutes() {
         }
     });
 
-    // 2. INTERNAL DELETE API (Replicator ke use ke liye)
+    // INTERNAL DELETE API
     server.Delete("/internal/delete", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
-        
-        // Backup node bhi apne WAL aur RAM dono se delete karega
         wal->appendLog("DELETE", key, "");
         storage->remove(key);
-
-        std::cout << "[Replicator] Internal backup delete executed for key: " << key << std::endl;
         res.status = 200;
         res.set_content("Backup Deleted", "text/plain");
     });
 
-    // 3. ADMIN API: Data Rebalancing (Naya node aane par)
+    // ADMIN API: Data Rebalancing
     server.Get("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
-        std::cout << "\n[Rebalance] Starting cluster rebalancing process..." << std::endl;
+        res.set_header("Access-Control-Allow-Origin", "*");
         
         auto allData = storage->getAllData();
         int transferCount = 0;
@@ -215,18 +193,9 @@ void Router::setupRoutes() {
         for (const auto& item : allData) {
             std::string key = item.first;
             std::string value = item.second;
-            
-            // HashRing se pucho ki is key ka ASLI maalik ab kaun hai
             std::string currentOwner = hashRing->getOwnerNode(key);
 
-            // NAYI DEBUG LINE: Isse terminal par saaf dikhega kaun kiska maalik hai
-            std::cout << "[Debug Ring] Key: " << key << " -> Owner according to Ring: " << currentOwner << " (My Address: " << myAddress << ")" << std::endl;
-
-            // Agar naya node aane ki wajah se maalik badal gaya hai
             if (currentOwner != myAddress) {
-                std::cout << "[Rebalance] Migrating Key: " << key << " -> to Node: " << currentOwner << std::endl;
-
-                // Naye maalik ko uske /internal/put par data transfer karo
                 size_t colonPos = currentOwner.find(':');
                 std::string host = currentOwner.substr(0, colonPos);
                 int port = std::stoi(currentOwner.substr(colonPos + 1));
@@ -238,22 +207,15 @@ void Router::setupRoutes() {
                 params.emplace("key", key);
                 params.emplace("value", value);
                 
-                // Transferring data...
                 auto transferRes = cli.Post("/internal/put", params);
                 
                 if (transferRes && transferRes->status == 200) {
-                    // Transfer successful! Ab apne RAM aur WAL se hata do
                     storage->remove(key);
                     wal->appendLog("DELETE", key, "");
                     transferCount++;
-                } else {
-                    std::cerr << "[Rebalance] FAILED to migrate key: " << key << std::endl;
                 }
             }
         }
-
-        std::cout << "[Rebalance] Process completed. Keys transferred: " << transferCount << "\n" << std::endl;
-        
         std::string jsonResponse = R"({"status": "rebalanced", "keys_transferred": )" + std::to_string(transferCount) + R"(})";
         res.set_content(jsonResponse, "application/json");
     });

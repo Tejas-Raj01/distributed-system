@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+body {
+  background-color: #020617; /* Extreme dark slate */
+  color: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
