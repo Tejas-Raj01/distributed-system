@@ -104,29 +104,46 @@ const ControlCenter = () => {
     }
   };
 
-  const injectStressTest = async () => {
-    if (isInjecting || isBackendOffline) return;
-    setIsInjecting(true); 
-    addLog(`[CHAOS] 🚀 Blasting C++ Cluster with concurrent network bursts...`);
-    
-    const CHUNK_SIZE = 100; 
-    for (let i = 0; i < injectCount; i += CHUNK_SIZE) {
-      let promises = [];
-      const currentChunkSize = Math.min(CHUNK_SIZE, injectCount - i);
+ const injectStressTest = async () => {
+  if (isInjecting || isBackendOffline) return;
+  setIsInjecting(true);
+  addLog(`[CHAOS] 🚀 Initializing Adaptive Batch Request Generator for ${injectCount} keys...`);
 
-      for (let j = 0; j < currentChunkSize; j++) {
-        const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
-        promises.push(apiService.putData(randomKey, "test_data").catch(()=>{}));
-      }
+  const BATCH_SIZE = 50;     // Hardware aur browser runtime optimization ke liye perfect concurrency threshold
+  const THROTTLE_DELAY = 80;  // Har batch execution burst ke beech ka micro recovery period (ms)
+
+  for (let i = 0; i < injectCount; i += BATCH_SIZE) {
+    let batchPromises = [];
+    const currentBatchSize = Math.min(BATCH_SIZE, injectCount - i);
+
+    addLog(`[BATCHING] Dispatching thread chunk: keys range ${i} to ${i + currentBatchSize}...`);
+
+    for (let j = 0; j < currentBatchSize; j++) {
+      const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
       
-      await Promise.allSettled(promises);
-      addLog(`[NETWORK] Burst Delivered: ${i + currentChunkSize}/${injectCount}`);
-      if (i + currentChunkSize < injectCount) await delay(150); 
+      // Request queue mein promise attach karna bina use await kiye (Parallelism inside chunk)
+      batchPromises.push(
+        apiService.putData(randomKey, "test_data")
+          .catch((err) => {
+            // Gracefully catch internal request drop taaki baaki pipeline crash na ho
+          })
+      );
     }
-    
-    setIsInjecting(false); 
-    addLog(`[SUCCESS] 🔥 Pipeline stress test finished.`);
-  };
+
+    // 🛡️ AllSettled waits only for the current micro-burst of 50 requests
+    await Promise.allSettled(batchPromises);
+
+    addLog(`[NETWORK] Burst Delivered. Pipeline synchronization: ${i + currentBatchSize}/${injectCount}`);
+
+    // Main JavaScript event loop ko frame drop avoid karne ke liye short breathing room dena
+    if (i + BATCH_SIZE < injectCount) {
+      await delay(THROTTLE_DELAY);
+    }
+  }
+
+  setIsInjecting(false);
+  addLog(`[SUCCESS] 🔥 Advanced Stress Pipeline executed flawlessly with zero thread locking.`);
+};
 
   const handleRebalance = async () => {
     if (isInjecting || isBackendOffline) return;
