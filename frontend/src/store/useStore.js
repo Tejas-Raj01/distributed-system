@@ -68,7 +68,14 @@ const useStore = create((set, get) => ({
   // 🛡️ NAYA: ERROR HANDLING SETTERS
   // ==========================================
   setIsInjecting: (bool) => set({ isInjecting: bool }),
-  setIsBackendOffline: (bool) => set({ isBackendOffline: bool })
+  setIsBackendOffline: (bool) => set({ isBackendOffline: bool }),
+
+  // useStore.js mein aayega
+    syncClusterState: (backendNodes, backendKeys) => set({
+    clusterState: backendNodes,
+    dataRing: backendKeys
+    }),
+
 }));
 
 export default useStore;

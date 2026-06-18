@@ -23,22 +23,16 @@ const ControlCenter = () => {
     addLog, addData, removeData, toggleNodeStatus, addNode, setIsInjecting, setIsBackendOffline 
   } = useStore();
 
-  // ==========================================
-  // 🔄 REAL-TIME HEALTH POLLING (Bypassed to fix CORS)
-  // ==========================================
+  // Real-Time Health Bypass (CORS Fix)
   useEffect(() => {
     const checkBackendHealth = async () => {
-      // TEMPORARY BYPASS: Forces backend to be "Alive" to avoid CORS spam in console
       setIsBackendOffline(false); 
     };
-
     checkBackendHealth();
-
     const gossipTimer = setInterval(() => {
       setGossipPulse(prev => !prev);
       checkBackendHealth(); 
     }, 2000);
-
     return () => clearInterval(gossipTimer);
   }, [setIsBackendOffline]);
 
@@ -103,22 +97,17 @@ const ControlCenter = () => {
   };
 
   // ==========================================
-  // ⚡ CHUNKED STRESS TEST 
+  // ⚡ ASLI CONCURRENCY ENGINE (Promise.allSettled)
   // ==========================================
   const injectStressTest = async () => {
     if (isInjecting || isBackendOffline) return;
     
     setIsInjecting(true); 
-    addLog(`[CHAOS] 🚀 Starting chunked injection of ${injectCount} keys...`);
+    addLog(`[CHAOS] 🚀 Blasting C++ Cluster with concurrent network bursts...`);
     
-    const CHUNK_SIZE = 100; 
+    const CHUNK_SIZE = 100; // Ek baar mein 100 requests ka burst jayega
 
     for (let i = 0; i < injectCount; i += CHUNK_SIZE) {
-      if (useStore.getState().isBackendOffline) {
-        addLog("[CRITICAL] Stress test aborted due to Backend failure!");
-        break;
-      }
-
       let promises = [];
       const currentChunkSize = Math.min(CHUNK_SIZE, injectCount - i);
 
@@ -127,29 +116,44 @@ const ControlCenter = () => {
         const randomVal = "test_data";
         const calculatedAngle = computeHashAngle(randomKey);
 
+        // Har request asynchronously fire hogi
         const req = fetch('http://127.0.0.1:8080/put', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: `key=${randomKey}&value=${randomVal}`
         })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) throw new Error("Drop");
+          return res.json();
+        })
         .then(data => {
-          if (data.status === "success") addData(randomKey, calculatedAngle); 
-        }).catch(() => {});
+          if (data.status === "success") {
+            // ✨ REAL-TIME FLASH: Jaise hi C++ response dega, turant dot ring par paint ho jayega!
+            addData(randomKey, calculatedAngle); 
+          }
+        })
+        .catch(() => {
+          // Error gracefully caught here taaki baaki requests parallelly chalti rahein
+        });
         
         promises.push(req);
       }
       
-      await Promise.all(promises);
-      addLog(`[NETWORK] Batched Chunk: ${i + currentChunkSize} / ${injectCount}`);
+      // 🛡️ AllSettled waits for the entire burst of 100 to settle (either success or fail)
+      const results = await Promise.allSettled(promises);
+      
+      // Concurrency pipeline metrics mapping
+      const successCount = results.filter(r => r.status === 'fulfilled').length;
+      
+      addLog(`[NETWORK] Burst Delivered: ${i + currentChunkSize}/${injectCount} (Active Connections: 100)`);
       
       if (i + currentChunkSize < injectCount) {
-        await delay(150); 
+        await delay(150); // Thread recovery buffer time for browser/C++ socket
       }
     }
     
     setIsInjecting(false); 
-    addLog(`[SUCCESS] 🔥 Finished pipeline injection of ${injectCount} keys.`);
+    addLog(`[SUCCESS] 🔥 Pipeline stress test finished for ${injectCount} keys.`);
   };
 
   const handleRebalance = async () => {
@@ -173,12 +177,24 @@ const ControlCenter = () => {
     addNode(newNode); 
   };
 
-  const handleToggleStatus = (id) => {
+  const handleToggleStatus = async (id) => {
     if (isInjecting || isBackendOffline) return;
+    
     toggleNodeStatus(id); 
     const node = clusterState.find(n => n.id === id);
     const nextStatus = node.status === "alive" ? "DEAD" : "ALIVE";
-    addLog(`[GOSSIP] Node ${id} marked as ${nextStatus}.`);
+    
+    addLog(`[GOSSIP] Node ${id} marked as ${nextStatus} in UI.`);
+
+    if (nextStatus === "DEAD") {
+      try {
+        addLog(`[ADMIN] Sending remote KILL signal to port ${id}...`);
+        await fetch(`http://127.0.0.1:${id}/admin/kill`, { method: 'POST' });
+        addLog(`[SUCCESS] Node ${id} gracefully shut down.`);
+      } catch (err) {
+        addLog(`[NETWORK] Node ${id} unreachable. Assume already dead.`);
+      }
+    }
   };
 
   return (
