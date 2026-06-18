@@ -5,9 +5,28 @@ const Terminal = () => {
   const terminalLogs = useStore(state => state.terminalLogs);
   const logsEndRef = useRef(null);
 
+  // ==========================================
+  // 1. AUTO-SCROLL LOGIC
+  // ==========================================
+  // Jaise hi terminalLogs array update hoga, yeh automatically neeche scroll kar dega
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [terminalLogs]);
+
+  // ==========================================
+  // 2. LOG PARSING & COLOR FORMATTING
+  // ==========================================
+  const getLogColor = (log) => {
+    if (log.includes("[ERROR]") || log.includes("[CRITICAL]")) return "text-red-400 font-bold";
+    if (log.includes("[INFO]")) return "text-blue-400 font-bold"; // Info is Blue
+    if (log.includes("[ROUTER]")) return "text-green-400 font-bold"; // Router is Green
+    if (log.includes("[SUCCESS]")) return "text-cyan-400 font-bold";
+    if (log.includes("[CHAOS]")) return "text-purple-400 font-bold";
+    if (log.includes("[ADMIN]")) return "text-emerald-400 font-bold";
+    if (log.includes("[GOSSIP]")) return "text-yellow-400 font-bold";
+    
+    return "text-slate-300 opacity-90"; // Default Text
+  };
 
   return (
     <div className="w-1/4 bg-black p-0 flex flex-col z-10 border-l border-slate-800">
@@ -17,17 +36,16 @@ const Terminal = () => {
           SYSTEM TERMINAL
         </h2>
       </div>
-      <div className="p-4 overflow-y-auto flex-1 text-[13px] space-y-3 font-mono">
+      
+      {/* Terminal Output Area */}
+      <div className="p-4 overflow-y-auto flex-1 text-[13px] space-y-3 font-mono hide-scrollbar">
         {terminalLogs.map((log, index) => (
-          <p key={index} className={
-            log.includes("ERROR") || log.includes("CRITICAL") ? "text-red-400" : 
-            log.includes("SUCCESS") ? "text-cyan-400 font-bold" : 
-            log.includes("CHAOS") ? "text-purple-400 font-bold" : 
-            log.includes("ADMIN") ? "text-emerald-400 font-bold" : 
-            log.includes("GOSSIP") ? "text-yellow-400 font-bold" : 
-            log.includes("INFO") ? "text-blue-400 font-bold" : "text-green-500 opacity-90"
-          }>{log}</p>
+          <p key={index} className={getLogColor(log)}>
+            {log}
+          </p>
         ))}
+        
+        {/* Invisible div for Auto-Scroll Anchor */}
         <div ref={logsEndRef} />
       </div>
     </div>
