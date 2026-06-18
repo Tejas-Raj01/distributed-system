@@ -31,4 +31,7 @@ public:
 
     // Server start karne ka function
     void start(int port);
+
+    // 📦 NAYA: Data Rebalancing trigger karne ka sender function
+    void initiateRebalance(const std::string& newNodeAddress);
 };

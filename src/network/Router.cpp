@@ -4,10 +4,11 @@
 #include "../../include/core/WAL.hpp"
 #include "../../include/cluster/Gossip.hpp"
 #include "../../include/cluster/Replicator.hpp"
-#include "../../include/core/Config.hpp" // ⚖️ NAYA: Thread-safe config header include kiya
+#include "../../include/core/Config.hpp" 
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <regex> // 📦 NAYA: JSON array ko unpack karne ke liye
 
 // Global ClusterConfig instance ko consume karne ke liye extern use kiya
 extern ClusterConfig global_config;
@@ -31,20 +32,17 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 2. GOSSIP HEARTBEAT API (/ping) - Cleaned duplicate entries
+    // 2. GOSSIP HEARTBEAT API (/ping)
     server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         res.set_content("{\"status\":\"ok\"}", "application/json");
     });
 
-    // ==========================================
-    // ⚖️ NAYA: CONFIG SYNC ENDPOINT (UI -> Backend)
-    // ==========================================
+    // 3. CONFIG SYNC ENDPOINT (UI -> Backend)
     server.Post("/admin/config", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         
-        // Incoming JSON string body se data extract karne ke liye helper lambda
         auto parse_json_param = [&](const std::string& key) {
             size_t pos = req.body.find("\"" + key + "\":");
             if (pos == std::string::npos) return -1;
@@ -57,7 +55,6 @@ void Router::setupRoutes() {
         int w = parse_json_param("W");
         int r = parse_json_param("R");
 
-        // Global config memory thread-safely update ho jayegi
         global_config.update(n, w, r);
         std::cout << "[CONFIG] Cluster consensus rules updated via UI -> N:" << global_config.N 
                   << " W:" << global_config.W << " R:" << global_config.R << "\n";
@@ -66,7 +63,59 @@ void Router::setupRoutes() {
         res.set_content(R"({"status":"success"})", "application/json");
     });
 
-    // 4. REPLICATION API
+    // ==========================================
+    // 🗣️ 4. GOSSIP API: Node Discovery Endpoint (THE TRIGGER)
+    // ==========================================
+    server.Post("/internal/gossip", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!req.has_param("newNode")) {
+            res.status = 400;
+            return;
+        }
+
+        std::string newNode = req.get_param_value("newNode");
+        std::cout << "\n[ROUTER] 📨 Received Gossip intro from new node: " << newNode << "\n";
+        
+        if (this->gossip != nullptr) {
+            this->gossip->receiveGossip(newNode); // Hash Ring Update karega
+        }
+
+        // 🚀 MASTERSTROKE: Background thread mein data rebalance start taaki main thread block na ho!
+        std::thread([this, newNode]() {
+            this->initiateRebalance(newNode);
+        }).detach();
+
+        res.status = 200;
+        res.set_content("Welcome to the cluster!", "text/plain");
+    });
+
+    // ==========================================
+    // 🚚 5. REBALANCE RECEIVER: Naya Node Data Accept Karega
+    // ==========================================
+    server.Post("/internal/transfer", [this](const httplib::Request& req, httplib::Response& res) {
+        std::cout << "\n[TRANSFER] 📦 Incoming bulk data transfer received...\n";
+        
+        // Regex magic: JSON format {"k":"key_name","v":"value_name"} se data nikalna
+        std::regex e("\\{\"k\":\"(.*?)\",\"v\":\"(.*?)\"\\}");
+        std::sregex_iterator iter(req.body.begin(), req.body.end(), e);
+        std::sregex_iterator end;
+        
+        int count = 0;
+        while (iter != end) {
+            std::string extractedKey = (*iter)[1];
+            std::string extractedVal = (*iter)[2];
+            
+            // Naya node seedha apni local RAM (Vault) mein data save kar lega
+            this->storage->put(extractedKey, extractedVal);
+            count++;
+            ++iter;
+        }
+
+        std::cout << "[TRANSFER] Successfully absorbed " << count << " donated keys into local storage.\n";
+        res.status = 200;
+        res.set_content("Transfer Complete", "text/plain");
+    });
+
+    // 6. REPLICATION API
     server.Post("/internal/replicate", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
@@ -75,7 +124,7 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 5. PUBLIC PUT API (Dynamic Quorum Enforcer)
+    // 7. PUBLIC PUT API (Dynamic Quorum Enforcer)
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
 
@@ -89,7 +138,6 @@ void Router::setupRoutes() {
         std::string value = req.get_param_value("value");
         int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
         
-        // Config reading under shared lock for massive multi-threaded traffic stability
         int current_W;
         {
             std::shared_lock<std::shared_mutex> lock(global_config.config_lock);
@@ -101,7 +149,7 @@ void Router::setupRoutes() {
         if (ownerNode == myAddress) {
             wal->appendLog("PUT", key, value);
             storage->put(key, value, ttl);
-            int acks = 1; // Local write commit response successful
+            int acks = 1; 
             
             bool replicaAck = false;
             if (myAddress == "127.0.0.1:8080") {
@@ -112,19 +160,16 @@ void Router::setupRoutes() {
 
             if (replicaAck) acks++;
 
-            // 🛡️ DYNAMIC QUORUM ENFORCEMENT: No more hardcoded checking!
             if (acks >= current_W) {
                 res.status = 200;
                 res.set_content(R"({"status": "success"})", "application/json");
             } else {
-                // Quorum failure rollback: memory clear aur WAL write abort tracking
                 storage->remove(key); 
                 wal->appendLog("DELETE", key, ""); 
-                res.status = 503; // Service Unavailable feedback to React UI
+                res.status = 503; 
                 res.set_content(R"({"error": true, "message": "Write Quorum Failed: Needed )" + std::to_string(current_W) + R"(, Got )" + std::to_string(acks) + R"("})", "application/json");
             }
         } else {
-            // Proxy routing node strategy
             httplib::Client cli("http://" + ownerNode);
             httplib::Params params;
             params.emplace("key", key);
@@ -142,7 +187,7 @@ void Router::setupRoutes() {
         }
     });
 
-    // 6. INTERNAL PUT API
+    // 8. INTERNAL PUT API
     server.Post("/internal/put", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
@@ -153,7 +198,7 @@ void Router::setupRoutes() {
         res.set_content("Internal Backup Saved", "text/plain");
     });
 
-    // 7. PUBLIC GET API (Consistency Latency Simulator)
+    // 9. PUBLIC GET API
     server.Get("/get", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
 
@@ -171,12 +216,9 @@ void Router::setupRoutes() {
             current_R = global_config.R;
         }
 
-        // ⏱️ STALE READS & LATENCY PROPAGATION SIMULATION
         if (current_R == 1) {
-            // Eventual Consistency: Bina kisi replica node coordinate kiye RAM se seedha data feko (Fast)
             std::this_thread::sleep_for(std::chrono::milliseconds(2)); 
         } else {
-            // Strong Consistency: Network verification simulation loops back blocks (Slow/Consistent)
             std::this_thread::sleep_for(std::chrono::milliseconds(current_R * 12)); 
         }
 
@@ -204,7 +246,7 @@ void Router::setupRoutes() {
         }
     });
 
-    // 8. PUBLIC DELETE API
+    // 10. PUBLIC DELETE API
     server.Delete("/delete", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
 
@@ -233,7 +275,7 @@ void Router::setupRoutes() {
         }
     });
 
-    // 9. INTERNAL DELETE API
+    // 11. INTERNAL DELETE API
     server.Delete("/internal/delete", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         wal->appendLog("DELETE", key, "");
@@ -242,51 +284,10 @@ void Router::setupRoutes() {
         res.set_content("Backup Deleted", "text/plain");
     });
 
-    // 10. ADMIN API: Data Rebalancing
-    server.Get("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        
-        auto allData = storage->getAllData();
-        int transferCount = 0;
-
-        for (const auto& item : allData) {
-            std::string key = item.first;
-            std::string value = item.second;
-            std::string currentOwner = hashRing->getOwnerNode(key);
-
-            if (currentOwner != myAddress) {
-                size_t colonPos = currentOwner.find(':');
-                std::string host = currentOwner.substr(0, colonPos);
-                int port = std::stoi(currentOwner.substr(colonPos + 1));
-
-                httplib::Client cli(host, port);
-                cli.set_connection_timeout(2, 0);
-                
-                httplib::Params params;
-                params.emplace("key", key);
-                params.emplace("value", value);
-                
-                auto transferRes = cli.Post("/internal/put", params);
-                
-                if (transferRes && transferRes->status == 200) {
-                    storage->remove(key);
-                    wal->appendLog("DELETE", key, "");
-                    transferCount++;
-                }
-            }
-        }
-        std::string jsonResponse = R"({"status": "rebalanced", "keys_transferred": )" + std::to_string(transferCount) + R"(})";
-        res.set_content(jsonResponse, "application/json");
-    });
-
-    // ==========================================
-    // 💓 11. ADMIN API: Cluster Status (Frontend Heartbeat)
-    // ==========================================
+    // 12. ADMIN API: Cluster Status (Frontend Heartbeat)
     server.Get("/admin/status", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         
-        // Abhi ke liye hum hardcoded ring bhej rahe hain. 
-        // Aage chalkar ise aapke ConsistentHash aur Gossip protocol se dynamic banayenge.
         std::string jsonResponse = R"({
             "nodes": [
                 {"id": 8080, "angle": 0, "status": "alive", "color": "#06b6d4"},
@@ -298,6 +299,69 @@ void Router::setupRoutes() {
         
         res.set_content(jsonResponse, "application/json");
     });
+}
+
+// ==========================================
+// 🚀 THE HTTP SENDER LOGIC: Purana Node Data Pack Karke Bhejega
+// ==========================================
+void Router::initiateRebalance(const std::string& newNodeAddress) {
+    std::cout << "\n[REBALANCE] 🔍 Scanning local storage for keys belonging to " << newNodeAddress << "...\n";
+    
+    // 1. Vault se saara data nikalna (Shared Lock ke sath safely)
+    auto allData = storage->getAllData();
+    
+    std::string jsonBody = "[";
+    bool isFirst = true;
+    int transferCount = 0;
+
+    // 2. Loop chalakar check karna kaunsi key donate karni hai
+    for (const auto& pair : allData) {
+        std::string key = pair.first;
+        std::string val = pair.second;
+
+        // Hash Ring se pucho: "Kya is key ka naya malik 'newNodeAddress' hai?"
+        std::string currentOwner = hashRing->getOwnerNode(key);
+        
+        if (currentOwner == newNodeAddress) {
+            if (!isFirst) jsonBody += ",";
+            
+            // JSON String build karna: {"k":"user_1", "v":"delhi"}
+            jsonBody += "{\"k\":\"" + key + "\",\"v\":\"" + val + "\"}";
+            isFirst = false;
+            transferCount++;
+
+            // 3. Apni memory se delete karna (Kyunki ab yeh data donate ho raha hai)
+            storage->remove(key);
+        }
+    }
+    jsonBody += "]";
+
+    // Agar koi data transfer ke liye nahi mila toh yahi ruk jao
+    if (transferCount == 0) {
+        std::cout << "[REBALANCE] No keys needed to be transferred. Node is balanced.\n";
+        return;
+    }
+
+    std::cout << "[REBALANCE] 📦 Packing " << transferCount << " keys. Dispatching to " << newNodeAddress << "...\n";
+
+    // 4. Target node ka host aur port nikalna
+    size_t colonPos = newNodeAddress.find(':');
+    if (colonPos == std::string::npos) return;
+    
+    std::string host = newNodeAddress.substr(0, colonPos);
+    int port = std::stoi(newNodeAddress.substr(colonPos + 1));
+
+    // 5. cpp-httplib ka client use karke naye node par POST marna
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(5, 0); // Bulk transfer mein thoda time lag sakta hai
+    
+    auto res = cli.Post("/internal/transfer", jsonBody, "application/json");
+
+    if (res && res->status == 200) {
+        std::cout << "[REBALANCE] ✅ Data donation successful!\n";
+    } else {
+        std::cerr << "[REBALANCE] ❌ Failed to transfer data. Target might be down.\n";
+    }
 }
 
 void Router::start(int port) {
