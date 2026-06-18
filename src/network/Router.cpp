@@ -4,7 +4,13 @@
 #include "../../include/core/WAL.hpp"
 #include "../../include/cluster/Gossip.hpp"
 #include "../../include/cluster/Replicator.hpp"
+#include "../../include/core/Config.hpp" // ⚖️ NAYA: Thread-safe config header include kiya
 #include <iostream>
+#include <thread>
+#include <chrono>
+
+// Global ClusterConfig instance ko consume karne ke liye extern use kiya
+extern ClusterConfig global_config;
 
 // Constructor: Saare pointers ko initialize karna aur routes setup karna
 Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch, 
@@ -17,7 +23,7 @@ Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch
 // APIs aur Unka Logic map karna
 void Router::setupRoutes() {
     
-    // 1. Handle Pre-flight OPTIONS requests (Browser real request se pehle yeh bhejta hai)
+    // 1. Handle Pre-flight OPTIONS requests (Browser ke CORS preflight check ke liye)
     server.Options("(.*)", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -25,24 +31,42 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 1. GOSSIP HEARTBEAT API (/ping)
-    // C++ Backend Code (Router setup mein add karein)
-server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
-    // 1. CORS Headers zaroori hain!
-    res.set_header("Access-Control-Allow-Origin", "*");
-    res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    
-    // 2. Success message bhejein
-    res.set_content("{\"status\":\"ok\"}", "application/json");
-});
+    // 2. GOSSIP HEARTBEAT API (/ping) - Cleaned duplicate entries
+    server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.set_content("{\"status\":\"ok\"}", "application/json");
+    });
 
-// Agar browser OPTIONS preflight request bhejta hai (CORS check ke liye)
-server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) {
-    res.set_header("Access-Control-Allow-Origin", "*");
-    res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-});
+    // ==========================================
+    // ⚖️ NAYA: CONFIG SYNC ENDPOINT (UI -> Backend)
+    // ==========================================
+    server.Post("/admin/config", [](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        
+        // Incoming JSON string body se data extract karne ke liye helper lambda
+        auto parse_json_param = [&](const std::string& key) {
+            size_t pos = req.body.find("\"" + key + "\":");
+            if (pos == std::string::npos) return -1;
+            size_t start = pos + key.length() + 3;
+            size_t end = req.body.find_first_of(",}", start);
+            return std::stoi(req.body.substr(start, end - start));
+        };
 
-    // 1.5 REPLICATION API
+        int n = parse_json_param("N");
+        int w = parse_json_param("W");
+        int r = parse_json_param("R");
+
+        // Global config memory thread-safely update ho jayegi
+        global_config.update(n, w, r);
+        std::cout << "[CONFIG] Cluster consensus rules updated via UI -> N:" << global_config.N 
+                  << " W:" << global_config.W << " R:" << global_config.R << "\n";
+        
+        res.status = 200;
+        res.set_content(R"({"status":"success"})", "application/json");
+    });
+
+    // 4. REPLICATION API
     server.Post("/internal/replicate", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
@@ -51,9 +75,8 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         res.status = 200;
     });
 
-    // 1. PUBLIC PUT API (With CORS & JSON)
+    // 5. PUBLIC PUT API (Dynamic Quorum Enforcer)
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
-        // MANUALLY ADDED CORS HEADER HERE
         res.set_header("Access-Control-Allow-Origin", "*");
 
         if (!req.has_param("key") || !req.has_param("value")) {
@@ -65,12 +88,20 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
         int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
+        
+        // Config reading under shared lock for massive multi-threaded traffic stability
+        int current_W;
+        {
+            std::shared_lock<std::shared_mutex> lock(global_config.config_lock);
+            current_W = global_config.W;
+        }
+
         std::string ownerNode = hashRing->getOwnerNode(key);
 
         if (ownerNode == myAddress) {
             wal->appendLog("PUT", key, value);
             storage->put(key, value, ttl);
-            int acks = 1; 
+            int acks = 1; // Local write commit response successful
             
             bool replicaAck = false;
             if (myAddress == "127.0.0.1:8080") {
@@ -81,16 +112,19 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
 
             if (replicaAck) acks++;
 
-            if (acks >= 2) {
+            // 🛡️ DYNAMIC QUORUM ENFORCEMENT: No more hardcoded checking!
+            if (acks >= current_W) {
                 res.status = 200;
                 res.set_content(R"({"status": "success"})", "application/json");
             } else {
+                // Quorum failure rollback: memory clear aur WAL write abort tracking
                 storage->remove(key); 
                 wal->appendLog("DELETE", key, ""); 
-                res.status = 503;
-                res.set_content(R"({"error": "Quorum Failed"})", "application/json");
+                res.status = 503; // Service Unavailable feedback to React UI
+                res.set_content(R"({"error": true, "message": "Write Quorum Failed: Needed )" + std::to_string(current_W) + R"(, Got )" + std::to_string(acks) + R"("})", "application/json");
             }
         } else {
+            // Proxy routing node strategy
             httplib::Client cli("http://" + ownerNode);
             httplib::Params params;
             params.emplace("key", key);
@@ -108,7 +142,7 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         }
     });
 
-    // 2. INTERNAL PUT API
+    // 6. INTERNAL PUT API
     server.Post("/internal/put", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         std::string value = req.get_param_value("value");
@@ -119,9 +153,8 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         res.set_content("Internal Backup Saved", "text/plain");
     });
 
-    // 3. GET API (/get)
+    // 7. PUBLIC GET API (Consistency Latency Simulator)
     server.Get("/get", [this](const httplib::Request& req, httplib::Response& res) {
-        // MANUALLY ADDED CORS HEADER HERE
         res.set_header("Access-Control-Allow-Origin", "*");
 
         if (!req.has_param("key")) {
@@ -131,6 +164,22 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         }
 
         std::string key = req.get_param_value("key");
+        
+        int current_R;
+        {
+            std::shared_lock<std::shared_mutex> lock(global_config.config_lock);
+            current_R = global_config.R;
+        }
+
+        // ⏱️ STALE READS & LATENCY PROPAGATION SIMULATION
+        if (current_R == 1) {
+            // Eventual Consistency: Bina kisi replica node coordinate kiye RAM se seedha data feko (Fast)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2)); 
+        } else {
+            // Strong Consistency: Network verification simulation loops back blocks (Slow/Consistent)
+            std::this_thread::sleep_for(std::chrono::milliseconds(current_R * 12)); 
+        }
+
         std::string ownerNode = hashRing->getOwnerNode(key);
 
         if (ownerNode == myAddress) {
@@ -155,9 +204,8 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         }
     });
 
-    // PUBLIC DELETE API
+    // 8. PUBLIC DELETE API
     server.Delete("/delete", [this](const httplib::Request& req, httplib::Response& res) {
-        // MANUALLY ADDED CORS HEADER HERE
         res.set_header("Access-Control-Allow-Origin", "*");
 
         std::string key = req.get_param_value("key");
@@ -185,7 +233,7 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         }
     });
 
-    // INTERNAL DELETE API
+    // 9. INTERNAL DELETE API
     server.Delete("/internal/delete", [this](const httplib::Request& req, httplib::Response& res) {
         std::string key = req.get_param_value("key");
         wal->appendLog("DELETE", key, "");
@@ -194,7 +242,7 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
         res.set_content("Backup Deleted", "text/plain");
     });
 
-    // ADMIN API: Data Rebalancing
+    // 10. ADMIN API: Data Rebalancing
     server.Get("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         
@@ -232,9 +280,7 @@ server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) 
     });
 }
 
-// Server ko port par listen karwana
 void Router::start(int port) {
     std::cout << "[Router] API Gateway starting on port " << port << "..." << std::endl;
-    // "0.0.0.0" ka matlab hai yeh server external network aur localhost dono se connect ho sakta hai
     server.listen("0.0.0.0", port);
 }
