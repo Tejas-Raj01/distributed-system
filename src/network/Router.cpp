@@ -26,10 +26,21 @@ void Router::setupRoutes() {
     });
 
     // 1. GOSSIP HEARTBEAT API (/ping)
-    server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
-        res.status = 200;
-        res.set_content("PONG", "text/plain");
-    });
+    // C++ Backend Code (Router setup mein add karein)
+server.Get("/ping", [](const httplib::Request& req, httplib::Response& res) {
+    // 1. CORS Headers zaroori hain!
+    res.set_header("Access-Control-Allow-Origin", "*");
+    res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    
+    // 2. Success message bhejein
+    res.set_content("{\"status\":\"ok\"}", "application/json");
+});
+
+// Agar browser OPTIONS preflight request bhejta hai (CORS check ke liye)
+server.Options("/ping", [](const httplib::Request& req, httplib::Response& res) {
+    res.set_header("Access-Control-Allow-Origin", "*");
+    res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+});
 
     // 1.5 REPLICATION API
     server.Post("/internal/replicate", [this](const httplib::Request& req, httplib::Response& res) {

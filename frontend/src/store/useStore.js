@@ -18,6 +18,12 @@ const useStore = create((set, get) => ({
     "> [ROUTER] Ready for inputs..."
   ],
 
+  // ==========================================
+  // 🛡️ NAYA: EDGE CASES & ERROR HANDLING STATES
+  // ==========================================
+  isInjecting: false,         // Stress test ke time UI lock karne ke liye
+  isBackendOffline: false,    // C++ server crash hone par Red Banner ke liye
+
   // --- ACTIONS (State Mutators) ---
 
   // Log add karna (Max 100 lines RAM save karne ke liye)
@@ -56,7 +62,13 @@ const useStore = create((set, get) => ({
   addNode: (newNode) => set((state) => {
     if (state.clusterState.find(n => n.id === newNode.id)) return state;
     return { clusterState: [...state.clusterState, newNode] };
-  })
+  }),
+
+  // ==========================================
+  // 🛡️ NAYA: ERROR HANDLING SETTERS
+  // ==========================================
+  setIsInjecting: (bool) => set({ isInjecting: bool }),
+  setIsBackendOffline: (bool) => set({ isBackendOffline: bool })
 }));
 
 export default useStore;
