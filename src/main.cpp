@@ -10,6 +10,9 @@
 #include "../include/cluster/Gossip.hpp"
 #include "../include/cluster/Replicator.hpp"
 #include "../include/network/Router.hpp"
+#include "../include/core/Config.hpp"
+
+ClusterConfig global_config;
 
 int main(int argc, char* argv[]) {
     // 1. Command line arguments check karein

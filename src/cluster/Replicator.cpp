@@ -1,8 +1,9 @@
 #include "../../include/cluster/Replicator.hpp"
-#include "../../external/httplib.h" // HTTP requests ke liye
-#include <thread>    // Async threading ke liye
+#include "../../external/httplib.h" // Sahi external path
 #include <iostream>
+#include <string>
 
+// Synchronous replication call for Strict Quorum (W)
 bool Replicator::forwardToReplica(const std::string& key, const std::string& value, const std::string& targetNode, int ttl) {
     if (targetNode.empty()) return false;
 
@@ -12,7 +13,7 @@ bool Replicator::forwardToReplica(const std::string& key, const std::string& val
 
     httplib::Client cli(host, port);
     
-    // Max 2 sec wait karega, uske baad timeout error dega
+    // Max 2 sec wait karega (Synchronous blocking call for Quorum)
     cli.set_connection_timeout(2, 0);
     cli.set_read_timeout(2, 0);
 
@@ -23,20 +24,22 @@ bool Replicator::forwardToReplica(const std::string& key, const std::string& val
         params.emplace("ttl", std::to_string(ttl));
     }
 
-    // NAYA: Hum /put ki jagah /internal/put par bhejenge
-    auto res = cli.Post("/internal/put", params);
+    // Router.cpp ke naye architecture ke hisaab se /internal/replicate
+    auto res = cli.Post("/internal/replicate", params);
 
     if (res && res->status == 200) {
         std::cout << "[Quorum] ACK received from Replica -> " << targetNode << std::endl;
-        return true; // Backup Success
+        return true; // Backup Success (Quorum ACK +1)
     } else {
         std::cerr << "[Quorum] FAILED: No response from Replica -> " << targetNode << std::endl;
         return false; // Backup Failed
     }
 }
 
+// Forward Delete request
 void Replicator::forwardDelete(const std::string& key, const std::string& targetNode) {
-    // Bulletproof host aur port split logic
+    if (targetNode.empty()) return;
+
     size_t colonPos = targetNode.find(':');
     std::string host = targetNode.substr(0, colonPos);
     int port = std::stoi(targetNode.substr(colonPos + 1));

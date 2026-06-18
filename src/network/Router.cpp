@@ -278,6 +278,26 @@ void Router::setupRoutes() {
         std::string jsonResponse = R"({"status": "rebalanced", "keys_transferred": )" + std::to_string(transferCount) + R"(})";
         res.set_content(jsonResponse, "application/json");
     });
+
+    // ==========================================
+    // 💓 11. ADMIN API: Cluster Status (Frontend Heartbeat)
+    // ==========================================
+    server.Get("/admin/status", [this](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        
+        // Abhi ke liye hum hardcoded ring bhej rahe hain. 
+        // Aage chalkar ise aapke ConsistentHash aur Gossip protocol se dynamic banayenge.
+        std::string jsonResponse = R"({
+            "nodes": [
+                {"id": 8080, "angle": 0, "status": "alive", "color": "#06b6d4"},
+                {"id": 8082, "angle": 120, "status": "alive", "color": "#10b981"},
+                {"id": 8084, "angle": 240, "status": "alive", "color": "#8b5cf6"}
+            ],
+            "dataMap": []
+        })";
+        
+        res.set_content(jsonResponse, "application/json");
+    });
 }
 
 void Router::start(int port) {
