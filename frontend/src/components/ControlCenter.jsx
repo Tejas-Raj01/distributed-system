@@ -18,16 +18,16 @@ const ControlCenter = () => {
   const [gossipPulse, setGossipPulse] = useState(false);
   const [injectCount, setInjectCount] = useState(1000); 
 
+  // ⚖️ NAYA: Config State (N, W, R)
+  const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
+
   const { 
     clusterState, isInjecting, isBackendOffline,
     addLog, addData, removeData, toggleNodeStatus, addNode, setIsInjecting, setIsBackendOffline 
   } = useStore();
 
-  // Real-Time Health Bypass (CORS Fix)
   useEffect(() => {
-    const checkBackendHealth = async () => {
-      setIsBackendOffline(false); 
-    };
+    const checkBackendHealth = async () => { setIsBackendOffline(false); };
     checkBackendHealth();
     const gossipTimer = setInterval(() => {
       setGossipPulse(prev => !prev);
@@ -36,7 +36,28 @@ const ControlCenter = () => {
     return () => clearInterval(gossipTimer);
   }, [setIsBackendOffline]);
 
-  // --- CRUD OPERATIONS ---
+  // ==========================================
+  // ⚖️ CONFIG SYNC (API CALL)
+  // ==========================================
+  const handleUpdateConfig = async () => {
+    if (isInjecting || isBackendOffline) return;
+    addLog(`[CONFIG] Syncing Rules with C++: N=${config.N}, W=${config.W}, R=${config.R}`);
+    try {
+      const res = await fetch('http://127.0.0.1:8080/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+      });
+      if (res.ok) addLog("[CONFIG] Success: C++ Memory Updated!");
+      else addLog("[ERROR] Failed to update config on server.");
+    } catch (err) {
+      addLog("[CRITICAL] Config sync failed. Backend unreachable.");
+    }
+  };
+
+  // ==========================================
+  // 🛡️ STRICT QUORUM ERROR HANDLING (PUT)
+  // ==========================================
   const handlePut = async () => {
     if (!keyInput || !valInput || isInjecting || isBackendOffline) return;
     const currentKey = keyInput; 
@@ -49,6 +70,14 @@ const ControlCenter = () => {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `key=${keyInput}&value=${valInput}`
       });
+      
+      // Agar Quorum fail hua (e.g., W=3 but got 2)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        addLog(`[ERROR] Write Quorum Failed: ${errorData.message || "Not enough nodes alive."}`);
+        return; // Dot draw nahi hoga!
+      }
+
       const data = await response.json();
       if (data.status === "success") {
         addLog(`[QUORUM] SUCCESS: Key '${currentKey}' saved.`);
@@ -61,16 +90,31 @@ const ControlCenter = () => {
     }
   };
 
+  // ==========================================
+  // ⏱️ STALE READS & LATENCY TRACKER (GET)
+  // ==========================================
   const handleGet = async () => {
     if (!keyInput || isInjecting || isBackendOffline) return;
     try {
       addLog(`[ROUTER] Fetching data for Key: '${keyInput}'...`);
+      
+      // Timer Start
+      const startTime = performance.now();
+      
       const response = await fetch(`http://127.0.0.1:8080/get?key=${keyInput}`);
-      const textData = await response.text();
-      if (response.status === 200) {
-        addLog(`[STORAGE] Found Value: '${textData}'`);
+      
+      // Timer Stop
+      const endTime = performance.now();
+      const latency = (endTime - startTime).toFixed(2); // ms mein
+      
+      if (response.ok) {
+        const textData = await response.text();
+        const readType = config.R === 1 ? "Eventual" : "Strong";
+        addLog(`[STORAGE] Found Value: '${textData}' | Latency: ${latency}ms (${readType})`);
         setValInput(textData);
-      } else { addLog(`[STORAGE] ${textData}`); }
+      } else { 
+        addLog(`[ERROR] Failed to fetch. Quorum not met or key missing. Latency: ${latency}ms`); 
+      }
     } catch (err) { 
       setIsBackendOffline(true);
       addLog("[CRITICAL] Connection lost during GET operation."); 
@@ -82,30 +126,24 @@ const ControlCenter = () => {
     try {
       addLog(`[ROUTER] Sending DELETE Request for: '${keyInput}'...`);
       const response = await fetch(`http://127.0.0.1:8080/delete?key=${keyInput}`, { method: 'DELETE' });
-      if (response.status === 200) {
+      if (response.ok) {
         addLog(`[QUORUM] SUCCESS: Key '${keyInput}' deleted.`);
         removeData(keyInput); 
         setKeyInput(""); setValInput("");
       } else {
-        const errText = await response.text();
-        addLog(`[STORAGE] ${errText}`);
+        addLog(`[ERROR] Delete Quorum Failed.`);
       }
     } catch (err) { 
       setIsBackendOffline(true);
-      addLog("[CRITICAL] Connection lost during DELETE operation."); 
+      addLog("[CRITICAL] Connection lost during DELETE."); 
     }
   };
 
-  // ==========================================
-  // ⚡ ASLI CONCURRENCY ENGINE (Promise.allSettled)
-  // ==========================================
   const injectStressTest = async () => {
     if (isInjecting || isBackendOffline) return;
-    
     setIsInjecting(true); 
     addLog(`[CHAOS] 🚀 Blasting C++ Cluster with concurrent network bursts...`);
-    
-    const CHUNK_SIZE = 100; // Ek baar mein 100 requests ka burst jayega
+    const CHUNK_SIZE = 100; 
 
     for (let i = 0; i < injectCount; i += CHUNK_SIZE) {
       let promises = [];
@@ -116,7 +154,6 @@ const ControlCenter = () => {
         const randomVal = "test_data";
         const calculatedAngle = computeHashAngle(randomKey);
 
-        // Har request asynchronously fire hogi
         const req = fetch('http://127.0.0.1:8080/put', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -127,29 +164,15 @@ const ControlCenter = () => {
           return res.json();
         })
         .then(data => {
-          if (data.status === "success") {
-            // ✨ REAL-TIME FLASH: Jaise hi C++ response dega, turant dot ring par paint ho jayega!
-            addData(randomKey, calculatedAngle); 
-          }
+          if (data.status === "success") addData(randomKey, calculatedAngle); 
         })
-        .catch(() => {
-          // Error gracefully caught here taaki baaki requests parallelly chalti rahein
-        });
-        
+        .catch(() => {});
         promises.push(req);
       }
       
-      // 🛡️ AllSettled waits for the entire burst of 100 to settle (either success or fail)
-      const results = await Promise.allSettled(promises);
-      
-      // Concurrency pipeline metrics mapping
-      const successCount = results.filter(r => r.status === 'fulfilled').length;
-      
-      addLog(`[NETWORK] Burst Delivered: ${i + currentChunkSize}/${injectCount} (Active Connections: 100)`);
-      
-      if (i + currentChunkSize < injectCount) {
-        await delay(150); // Thread recovery buffer time for browser/C++ socket
-      }
+      await Promise.allSettled(promises);
+      addLog(`[NETWORK] Burst Delivered: ${i + currentChunkSize}/${injectCount}`);
+      if (i + currentChunkSize < injectCount) await delay(150); 
     }
     
     setIsInjecting(false); 
@@ -179,13 +202,10 @@ const ControlCenter = () => {
 
   const handleToggleStatus = async (id) => {
     if (isInjecting || isBackendOffline) return;
-    
     toggleNodeStatus(id); 
     const node = clusterState.find(n => n.id === id);
     const nextStatus = node.status === "alive" ? "DEAD" : "ALIVE";
-    
     addLog(`[GOSSIP] Node ${id} marked as ${nextStatus} in UI.`);
-
     if (nextStatus === "DEAD") {
       try {
         addLog(`[ADMIN] Sending remote KILL signal to port ${id}...`);
@@ -213,6 +233,34 @@ const ControlCenter = () => {
         </div>
       )}
 
+      {/* ==========================================
+          ⚖️ CLUSTER CONFIGURATION (N, W, R)
+          ========================================== */}
+      <div className={`bg-slate-950 p-4 rounded border border-slate-700 mt-6 transition-opacity ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
+        <h3 className="text-amber-400 font-bold text-[10px] uppercase tracking-widest mb-3">Cluster Config (Quorum)</h3>
+        <div className="flex gap-2">
+          {['N', 'W', 'R'].map(param => (
+            <div key={param} className="flex flex-col flex-1">
+              <label className="text-[9px] text-slate-500 font-bold mb-1 text-center">{param}</label>
+              <input 
+                disabled={isInjecting || isBackendOffline}
+                type="number" min="1" max="5"
+                className="bg-slate-900 border border-slate-700 p-1 text-center text-white rounded text-sm disabled:cursor-not-allowed"
+                value={config[param]}
+                onChange={(e) => setConfig({...config, [param]: parseInt(e.target.value)})}
+              />
+            </div>
+          ))}
+        </div>
+        <button 
+          disabled={isInjecting || isBackendOffline}
+          onClick={handleUpdateConfig} 
+          className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition"
+        >
+          APPLY CONFIG TO C++
+        </button>
+      </div>
+
       {/* MANUAL CRUD */}
       <div className={`flex flex-col gap-4 mt-6 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-slate-500 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-slate-800 pb-2">Manual Operations</h2>
@@ -226,10 +274,10 @@ const ControlCenter = () => {
       </div>
 
       {/* CHAOS & INJECTION VOLUME */}
-      <div className="flex flex-col gap-3 mt-8">
+      <div className={`flex flex-col gap-3 mt-8 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-purple-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-purple-900/50 pb-2">Chaos & Automation</h2>
         
-        <div className={`flex flex-col gap-1 mt-1 mb-2 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
+        <div className="flex flex-col gap-1 mt-1 mb-2">
           <div className="flex justify-between items-center text-[10px] text-purple-300 font-bold uppercase tracking-wider">
             <span>Injection Volume</span>
             <span className="text-purple-100 bg-purple-900/50 px-2 py-0.5 rounded">{injectCount} Keys</span>
@@ -243,44 +291,20 @@ const ControlCenter = () => {
           />
         </div>
 
-        <button 
-          disabled={isInjecting || isBackendOffline} 
-          onClick={injectStressTest} 
-          className={`px-4 py-3 rounded font-bold text-sm transition border ${
-            isInjecting || isBackendOffline 
-              ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed' 
-              : 'bg-purple-600/20 border-purple-500/50 text-purple-300 hover:bg-purple-600/40'
-          }`}
-        >
+        <button disabled={isInjecting || isBackendOffline} onClick={injectStressTest} className="px-4 py-3 rounded font-bold text-sm transition border bg-purple-600/20 border-purple-500/50 text-purple-300 hover:bg-purple-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
           🚀 INJECT {injectCount} KEYS
         </button>
 
-        <button 
-          disabled={isInjecting || isBackendOffline} 
-          onClick={handleRebalance} 
-          className={`px-4 py-3 rounded font-bold text-sm transition border ${
-            isInjecting || isBackendOffline 
-              ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed' 
-              : 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40'
-          }`}
-        >
+        <button disabled={isInjecting || isBackendOffline} onClick={handleRebalance} className="px-4 py-3 rounded font-bold text-sm transition border bg-emerald-600/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
           ⚖️ REBALANCE CLUSTER
         </button>
 
-        <button 
-          disabled={isInjecting || isBackendOffline} 
-          onClick={handleAddNode} 
-          className={`px-4 py-3 rounded font-bold text-sm transition border ${
-            isInjecting || isBackendOffline 
-              ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed' 
-              : 'bg-amber-600/20 border-amber-500/50 text-amber-400 hover:bg-amber-600/40'
-          }`}
-        >
+        <button disabled={isInjecting || isBackendOffline} onClick={handleAddNode} className="px-4 py-3 rounded font-bold text-sm transition border bg-amber-600/20 border-amber-500/50 text-amber-400 hover:bg-amber-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
           ➕ CONNECT NODE 8086
         </button>
       </div>
 
-      {/* CLUSTER STATUS AND KILL SWITCHES */}
+      {/* CLUSTER STATUS */}
       <div className={`flex flex-col gap-3 mt-8 pb-4 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
         {clusterState.map(node => (
@@ -290,13 +314,7 @@ const ControlCenter = () => {
               <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? node.color : "#334155" }}></span>
               <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {node.id}</span>
             </div>
-            <button 
-              disabled={isInjecting || isBackendOffline} 
-              onClick={() => handleToggleStatus(node.id)} 
-              className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${
-                node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'
-              }`}
-            >
+            <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
               {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
             </button>
           </div>
