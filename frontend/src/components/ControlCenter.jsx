@@ -14,6 +14,9 @@ const ControlCenter = () => {
   const [keyInput, setKeyInput] = useState("");
   const [valInput, setValInput] = useState("");
   const [gossipPulse, setGossipPulse] = useState(false);
+  
+  // 🎚️ NAYA STATE: Slider ki value track karne ke liye (Default 150)
+  const [injectCount, setInjectCount] = useState(150);
 
   const { clusterState, addLog, addData, removeData, toggleNodeStatus, addNode } = useStore();
 
@@ -72,21 +75,29 @@ const ControlCenter = () => {
     } catch (err) { addLog("[CRITICAL] Backend unreachable."); }
   };
 
+  // 🚀 UPDATE: Ab loop 1000 ki jagah injectCount tak chalega
   const injectStressTest = async () => {
-    addLog("[CHAOS] 🚀 Injecting 150 random keys into cluster...");
-    for(let i=0; i<150; i++) {
-      const randomKey = `user_${Math.floor(Math.random() * 99999)}`;
+    addLog(`[CHAOS] 🚀 Injecting ${injectCount} random keys into cluster...`);
+    let promises = [];
+
+    for(let i=0; i<injectCount; i++) {
+      const randomKey = `user_${Math.floor(Math.random() * 999999)}`;
       const randomVal = `data_${i}`;
       const calculatedAngle = computeHashAngle(randomKey);
 
-      fetch('http://127.0.0.1:8080/put', {
+      const req = fetch('http://127.0.0.1:8080/put', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `key=${randomKey}&value=${randomVal}`
       }).then(res => res.json()).then(data => {
         if (data.status === "success") addData(randomKey, calculatedAngle); 
       }).catch(err => {});
+      
+      promises.push(req);
     }
+    
+    await Promise.all(promises);
+    addLog(`[SUCCESS] ${injectCount} Keys injected & rendered via Canvas!`);
   };
 
   const handleRebalance = async () => {
@@ -134,7 +145,27 @@ const ControlCenter = () => {
       {/* CHAOS */}
       <div className="flex flex-col gap-3 mt-8">
         <h2 className="text-purple-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-purple-900/50 pb-2">Chaos & Automation</h2>
-        <button onClick={injectStressTest} className="bg-purple-600/20 border border-purple-500/50 text-purple-300 px-4 py-3 rounded font-bold hover:bg-purple-600/40 transition text-sm">🚀 INJECT KEYS (Concurrency)</button>
+        
+        {/* 🎚️ NAYA: Injection Volume Slider */}
+        <div className="flex flex-col gap-1 mt-1 mb-2">
+          <div className="flex justify-between items-center text-[10px] text-purple-300 font-bold uppercase tracking-wider">
+            <span>Injection Volume</span>
+            <span className="text-purple-100 bg-purple-900/50 px-2 py-0.5 rounded">{injectCount} Keys</span>
+          </div>
+          <input 
+            type="range" 
+            min="10" 
+            max="2000" 
+            step="10" 
+            value={injectCount} 
+            onChange={(e) => setInjectCount(Number(e.target.value))} 
+            className="w-full accent-purple-500 cursor-pointer"
+          />
+        </div>
+
+        <button onClick={injectStressTest} className="bg-purple-600/20 border border-purple-500/50 text-purple-300 px-4 py-3 rounded font-bold hover:bg-purple-600/40 transition text-sm">
+          🚀 INJECT {injectCount} KEYS
+        </button>
         <button onClick={handleRebalance} className="bg-emerald-600/20 border border-emerald-500/50 text-emerald-400 px-4 py-3 rounded font-bold hover:bg-emerald-600/40 transition text-sm">⚖️ REBALANCE CLUSTER</button>
         <button onClick={handleAddNode} className="bg-amber-600/20 border border-amber-500/50 text-amber-400 px-4 py-3 rounded font-bold hover:bg-amber-600/40 transition text-sm">➕ CONNECT NODE 8086</button>
       </div>
