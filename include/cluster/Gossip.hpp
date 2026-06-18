@@ -11,6 +11,8 @@ class ConsistentHash;
 
 class Gossip {
 private:
+    std::string myAddress;         // 🆕 NAYA: Is node ki khud ki identity (e.g., "127.0.0.1:8086")
+    
     std::atomic<bool> isRunning;   // Thread-safe boolean (loop control)
     std::thread heartbeatThread;   // Background OS thread
     
@@ -27,14 +29,19 @@ private:
     void runHeartbeat();
 
 public:
-    // Constructor mein Hash Ring ka pointer pass karenge
-    Gossip(ConsistentHash* ring);
+    // 🔄 UPDATE: Constructor mein ab myAddress bhi pass hoga
+    Gossip(const std::string& myAddress, ConsistentHash* ring);
     
     // Destructor (safely thread ko band karega)
     ~Gossip();
 
-    // Core Functions
-    void start();
+    // 🔄 UPDATE: start function ab seed nodes accept karega
+    void start(const std::vector<std::string>& seedNodes);
+    
     void stop();
     void addPeer(const std::string& peerAddress);
+
+    // 🆕 NAYA: Cluster Discovery & Rebalance Triggers
+    void sendDiscoveryPing(const std::string& targetNode);
+    void receiveGossip(const std::string& newNode);
 };
