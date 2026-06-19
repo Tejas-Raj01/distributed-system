@@ -1,14 +1,18 @@
 // frontend/src/services/api.js
 
-const BASE_URL = 'http://127.0.0.1:8080'; // Router/Gateway Node Address
+// 🚀 THE FIX: NGROK URL
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export const apiService = {
   
-  // 1. PUT Data (With Form URL Encoding & Error Capture)
+  // 1. PUT Data
   putData: async (key, value, ttl = 0) => {
     const response = await fetch(`${BASE_URL}/put`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'ngrok-skip-browser-warning': 'true' // 🚀 THE MAGIC HEADER
+      },
       body: `key=${encodeURIComponent(key)}&value=${encodeURIComponent(value)}&ttl=${ttl}`
     });
 
@@ -19,9 +23,11 @@ export const apiService = {
     return response.json();
   },
 
-  // 2. GET Data (Returns raw text value from storage)
+  // 2. GET Data
   getData: async (key) => {
-    const response = await fetch(`${BASE_URL}/get?key=${encodeURIComponent(key)}`);
+    const response = await fetch(`${BASE_URL}/get?key=${encodeURIComponent(key)}`, {
+      headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
+    });
     if (!response.ok) {
       throw new Error('Read Quorum Failed or Key missing');
     }
@@ -31,7 +37,8 @@ export const apiService = {
   // 3. DELETE Data
   deleteData: async (key) => {
     const response = await fetch(`${BASE_URL}/delete?key=${encodeURIComponent(key)}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
     });
     if (!response.ok) {
       throw new Error('Delete Quorum Failed');
@@ -39,20 +46,26 @@ export const apiService = {
     return response.json();
   },
 
-  // 4. Fetch Live Cluster State (Canvas Ring Sync Helper)
-  // Backend JSON Structure: {"nodes": [{port: 8080, status: "alive"}], "dataMap": [{"key": "u1", "owner": 8080}]}
+  // 4. Fetch Live Cluster State
   fetchClusterState: async () => {
-    const response = await fetch(`${BASE_URL}/admin/status`);
+    const response = await fetch(`${BASE_URL}/admin/status`, {
+      headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
+    });
     if (!response.ok) {
       throw new Error('Cluster state sync failed');
     }
     return response.json();
   },
 
-  // 5. Remote Node Kill Switch (Hits specific node port directly)
+  // 5. Remote Node Kill Switch
   killNode: async (port) => {
-    const response = await fetch(`http://127.0.0.1:${port}/admin/kill`, {
-      method: 'POST'
+    const response = await fetch(`${BASE_URL}/admin/kill`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'ngrok-skip-browser-warning': 'true' 
+      },
+      body: `port=${port}`
     });
     if (!response.ok) {
       throw new Error(`Remote kill failed on port ${port}`);
@@ -60,11 +73,14 @@ export const apiService = {
     return response.json();
   },
 
-  // 6. Quorum Config Sync (Pillar 1 Helper)
+  // 6. Quorum Config Sync
   updateConfig: async (config) => {
     const response = await fetch(`${BASE_URL}/admin/config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // 🚀 MAGIC HEADER
+      },
       body: JSON.stringify(config)
     });
     if (!response.ok) {

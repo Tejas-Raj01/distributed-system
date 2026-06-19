@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import useStore from '../store/useStore';
 import { apiService } from '../services/api'; // 📡 THE MISSING IMPORT
 
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const ControlCenter = () => {
@@ -151,7 +153,10 @@ const ControlCenter = () => {
     if (isInjecting || isBackendOffline) return;
     addLog("[ADMIN] ⚖️ Triggering Cluster Rebalance...");
     try {
-      const response = await fetch('http://127.0.0.1:8080/admin/rebalance');
+      // 🚀 THE FIX: NGROK URL & HEADER
+      const response = await fetch(`${BASE_URL}/admin/rebalance`, {
+        headers: { 'ngrok-skip-browser-warning': 'true' }
+      });
       const data = await response.json();
       addLog(`[REBALANCE] Process completed. Keys transferred: ${data.keys_transferred}`);
     } catch (err) { addLog("[CRITICAL] Rebalance failed."); }
@@ -165,9 +170,9 @@ const ControlCenter = () => {
   const handleToggleStatus = async (nodeId) => {
     console.log(`> [CHAOS] Sending kill signal to Node on port ${nodeId}...`);
     try {
-      await fetch('http://127.0.0.1:8080/admin/kill', {
+      await fetch(`${BASE_URL}/admin/kill`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'ngrok-skip-browser-warning': 'true' },
         body: `port=${nodeId}` 
       });
       // 1 second baad C++ Gossip khud bata dega ki node offline chala gaya hai!
@@ -190,10 +195,11 @@ const ControlCenter = () => {
 
     console.log(`> [UI] Spawning Node ${spawnCount} (Internal Port: ${nextPort})...`);
     try {
-      const response = await fetch('http://127.0.0.1:8080/admin/spawn', {
+      const response = await fetch(`${BASE_URL}/admin/spawn`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: `port=${nextPort}` 
       });
