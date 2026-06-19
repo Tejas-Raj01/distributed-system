@@ -13,25 +13,38 @@ const ControlCenter = () => {
   const [injectCount, setInjectCount] = useState(1000); 
   const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
   const [spawnCount, setSpawnCount] = useState(1);
+  
+  // 🚀 NAYA JADOO: Side panel ke liye saare nodes ki history track karega
+  const [knownNodes, setKnownNodes] = useState(new Set([8080])); 
   const maxNodes = 10;
 
   const { 
     clusterState, isInjecting, isBackendOffline,
-    addLog, toggleNodeStatus, setIsInjecting, setIsBackendOffline 
+    addLog, setIsInjecting, setIsBackendOffline 
   } = useStore();
 
   useEffect(() => {
     const syncLiveState = async () => {
       try {
-        console.log("FETCHING FROM:", BASE_URL); 
         const data = await apiService.fetchClusterState();
+        
+        // 1. Hash Ring ke liye sirf zinda nodes update karo
         useStore.setState({
           clusterState: data.nodes || [],
           dataRing: data.dataMap || []
         });
+
+        // 2. Side Panel ke liye history mein naye nodes add karo (kabhi delete nahi honge)
+        if (data.nodes) {
+          setKnownNodes(prev => {
+            const newSet = new Set(prev);
+            data.nodes.forEach(n => newSet.add(n.id));
+            return newSet;
+          });
+        }
+        
         setIsBackendOffline(false);
       } catch (err) {
-        console.error("SYNC FAILED:", err); 
         setIsBackendOffline(true);
       }
     };
@@ -110,9 +123,7 @@ const ControlCenter = () => {
 
       for (let j = 0; j < currentBatchSize; j++) {
         const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
-        batchPromises.push(
-          apiService.putData(randomKey, "test_data").catch((err) => {})
-        );
+        batchPromises.push(apiService.putData(randomKey, "test_data").catch((err) => {}));
       }
 
       await Promise.allSettled(batchPromises);
@@ -152,26 +163,45 @@ const ControlCenter = () => {
     } catch (err) { addLog("[CRITICAL] Rebalance failed."); }
   };
 
-  const handleToggleStatus = async (nodeId) => {
-    console.log(`> [CHAOS] Sending kill signal to Node on port ${nodeId}...`);
+  // 🚀 THE FIX: KILL AUR REVIVE LOGIC
+  const handleToggleStatus = async (nodeId, isAlive) => {
+    if (nodeId === 8080) {
+      addLog("[WARNING] 👑 Master Node (8080) cannot be killed from UI!");
+      return;
+    }
+
     try {
-      await fetch(`${BASE_URL}/admin/kill`, {
-        method: 'POST',
-        headers: { 'ngrok-skip-browser-warning': 'true' },
-        body: `port=${nodeId}` 
-      });
+      if (isAlive) {
+        console.log(`> [CHAOS] Sending kill signal to Node ${nodeId}...`);
+        await fetch(`${BASE_URL}/admin/kill`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded', // <-- YEH MISSING THA!
+            'ngrok-skip-browser-warning': 'true' 
+          },
+          body: `port=${nodeId}` 
+        });
+        addLog(`[CHAOS] ☠️ Kill signal sent to Node ${nodeId}`);
+      } else {
+        console.log(`> [ORCHESTRATOR] Reviving Node ${nodeId}...`);
+        await fetch(`${BASE_URL}/admin/spawn`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'ngrok-skip-browser-warning': 'true' 
+          },
+          body: `port=${nodeId}` 
+        });
+        addLog(`[ORCHESTRATOR] ➕ Revive signal sent to Node ${nodeId}`);
+      }
     } catch (error) {
-      console.error("> [ERROR] Failed to execute chaos engineering:", error);
+      console.error("> [ERROR] Failed to execute status toggle:", error);
     }
   };
 
   const spawnNewNode = async () => {
-    if (spawnCount > maxNodes) {
-      console.warn("> [UI] Cluster has reached its maximum capacity of 10 extra nodes.");
-      return;
-    }
+    if (spawnCount > maxNodes) return;
     const nextPort = 8084 + (spawnCount * 2);
-    console.log(`> [UI] Spawning Node ${spawnCount} (Internal Port: ${nextPort})...`);
     try {
       const response = await fetch(`${BASE_URL}/admin/spawn`, {
         method: 'POST',
@@ -183,11 +213,7 @@ const ControlCenter = () => {
       });
 
       if (response.ok) {
-        console.log(`> [SUCCESS] Node ${spawnCount} is successfully booting up in the background!`);
-        setSpawnCount(prevCount => prevCount + 1); 
-      } else {
-        const data = await response.json();
-        console.error("> [ERROR] Failed to spawn:", data.error);
+        setSpawnCount(prev => prev + 1); 
       }
     } catch (error) {
       console.error("> [CRITICAL] Could not connect to Master Node:", error);
@@ -210,29 +236,19 @@ const ControlCenter = () => {
         </div>
       )}
 
-      {/* ⚖️ CLUSTER CONFIGURATION */}
       <div className={`bg-slate-950 p-4 rounded border border-slate-700 mt-6 transition-opacity ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h3 className="text-amber-400 font-bold text-[10px] uppercase tracking-widest mb-3">Cluster Config (Quorum)</h3>
         <div className="flex gap-2">
           {['N', 'W', 'R'].map(param => (
             <div key={param} className="flex flex-col flex-1">
               <label className="text-[9px] text-slate-500 font-bold mb-1 text-center">{param}</label>
-              <input 
-                disabled={isInjecting || isBackendOffline}
-                type="number" min="1" max="5"
-                className="bg-slate-900 border border-slate-700 p-1 text-center text-white rounded text-sm disabled:cursor-not-allowed"
-                value={config[param]}
-                onChange={(e) => setConfig({...config, [param]: parseInt(e.target.value)})}
-              />
+              <input disabled={isInjecting || isBackendOffline} type="number" min="1" max="5" className="bg-slate-900 border border-slate-700 p-1 text-center text-white rounded text-sm disabled:cursor-not-allowed" value={config[param]} onChange={(e) => setConfig({...config, [param]: parseInt(e.target.value)})} />
             </div>
           ))}
         </div>
-        <button disabled={isInjecting || isBackendOffline} onClick={handleUpdateConfig} className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition">
-          APPLY CONFIG TO C++
-        </button>
+        <button disabled={isInjecting || isBackendOffline} onClick={handleUpdateConfig} className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition">APPLY CONFIG TO C++</button>
       </div>
 
-      {/* MANUAL CRUD */}
       <div className={`flex flex-col gap-4 mt-6 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-slate-500 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-slate-800 pb-2">Manual Operations</h2>
         <input disabled={isInjecting || isBackendOffline} className="bg-slate-950 p-3 border border-slate-700 rounded text-white focus:outline-none focus:border-cyan-500 transition disabled:cursor-not-allowed" placeholder="Key" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} />
@@ -244,72 +260,53 @@ const ControlCenter = () => {
         </div>
       </div>
 
-      {/* CHAOS & INJECTION VOLUME */}
       <div className={`flex flex-col gap-3 mt-8 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-purple-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-purple-900/50 pb-2">Chaos & Automation</h2>
-        
         <div className="flex flex-col gap-1 mt-1 mb-2">
           <div className="flex justify-between items-center text-[10px] text-purple-300 font-bold uppercase tracking-wider">
             <span>Injection Volume</span>
             <span className="text-purple-100 bg-purple-900/50 px-2 py-0.5 rounded">{injectCount} Keys</span>
           </div>
-          <input 
-            disabled={isInjecting || isBackendOffline}
-            type="range" min="100" max="2000" step="100" 
-            value={injectCount} 
-            onChange={(e) => setInjectCount(Number(e.target.value))} 
-            className="w-full accent-purple-500 cursor-pointer disabled:cursor-not-allowed"
-          />
+          <input disabled={isInjecting || isBackendOffline} type="range" min="100" max="2000" step="100" value={injectCount} onChange={(e) => setInjectCount(Number(e.target.value))} className="w-full accent-purple-500 cursor-pointer disabled:cursor-not-allowed" />
         </div>
-
-        <button disabled={isInjecting || isBackendOffline} onClick={injectStressTest} className="px-4 py-3 rounded font-bold text-sm transition border bg-purple-600/20 border-purple-500/50 text-purple-300 hover:bg-purple-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
-          🚀 INJECT {injectCount} KEYS
-        </button>
-
-        <button disabled={isInjecting || isBackendOffline} onClick={handleRebalance} className="px-4 py-3 rounded font-bold text-sm transition border bg-emerald-600/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
-          ⚖️ REBALANCE CLUSTER
-        </button>
-        
-        {/* 🚀 YAHAN AAYA HAI NAYA BUTTON 🚀 */}
-        <button disabled={isInjecting || isBackendOffline} onClick={handleClearAll} className="px-4 py-3 rounded font-bold text-sm transition border bg-red-900/40 border-red-500/50 text-red-400 hover:bg-red-800/60 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
-          🧹 CLEAR ALL CLUSTER DATA
-        </button>
-
-        <button 
-          onClick={spawnNewNode} 
-          disabled={spawnCount > maxNodes}
-          className={`w-full py-3 rounded uppercase font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2 ${
-            spawnCount > maxNodes 
-              ? 'bg-gray-800 text-gray-500 border border-gray-600 cursor-not-allowed' 
-              : 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-800/50'
-          }`}
-        >
-          {spawnCount > maxNodes ? (
-            'CLUSTER FULL (MAX 10 NODES)'
-          ) : (
-            <><span className="text-xl">+</span> CONNECT NEW NODE {spawnCount}</>
-          )}
+        <button disabled={isInjecting || isBackendOffline} onClick={injectStressTest} className="px-4 py-3 rounded font-bold text-sm transition border bg-purple-600/20 border-purple-500/50 text-purple-300 hover:bg-purple-600/40 disabled:bg-slate-800 disabled:cursor-not-allowed">🚀 INJECT {injectCount} KEYS</button>
+        <button disabled={isInjecting || isBackendOffline} onClick={handleRebalance} className="px-4 py-3 rounded font-bold text-sm transition border bg-emerald-600/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40 disabled:bg-slate-800 disabled:cursor-not-allowed">⚖️ REBALANCE CLUSTER</button>
+        <button disabled={isInjecting || isBackendOffline} onClick={handleClearAll} className="px-4 py-3 rounded font-bold text-sm transition border bg-red-900/40 border-red-500/50 text-red-400 hover:bg-red-800/60 disabled:bg-slate-800 disabled:cursor-not-allowed">🧹 CLEAR ALL CLUSTER DATA</button>
+        <button onClick={spawnNewNode} disabled={spawnCount > maxNodes} className={`w-full py-3 rounded uppercase font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2 ${spawnCount > maxNodes ? 'bg-gray-800 text-gray-500 border border-gray-600 cursor-not-allowed' : 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-800/50'}`}>
+          {spawnCount > maxNodes ? 'CLUSTER FULL (MAX 10 NODES)' : <><span className="text-xl">+</span> CONNECT NEW NODE {spawnCount}</>}
         </button>
       </div>
 
-      {/* CLUSTER STATUS */}
+      {/* 🚀 THE FIX: DYNAMIC STATUS RENDERING */}
       <div className={`flex flex-col gap-3 mt-8 pb-4 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
         
-        {[...clusterState].sort((a, b) => a.id - b.id).map((node, index) => (
-          <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
-            <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
-            <div className="flex items-center gap-2 relative z-10">
-              <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
+        {Array.from(knownNodes).sort((a, b) => a - b).map((nodeId, index) => {
+          // Check karo kya node abhi zinda list mein hai?
+          const aliveNode = clusterState.find(n => n.id === nodeId);
+          const isAlive = !!aliveNode;
+          const nodeColor = isAlive ? (aliveNode.color || "#06b6d4") : "#334155"; // Grey for dead
+
+          return (
+            <div key={nodeId} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
+              <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse && isAlive ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${nodeColor}, transparent)`}}></div>
+              <div className="flex items-center gap-2 relative z-10">
+                <span className={`w-3 h-3 rounded-full ${isAlive ? "animate-pulse" : ""}`} style={{ backgroundColor: nodeColor }}></span>
+                
+                <span className={`font-mono ${isAlive ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1} ({nodeId})</span>
+              </div>
               
-              <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1}</span>
+              {/* Master Node (8080) ko UI se maarne nahi denge */}
+              {nodeId !== 8080 ? (
+                <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(nodeId, isAlive)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${isAlive ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
+                  {isAlive ? "☠️ KILL" : "➕ REVIVE"}
+                </button>
+              ) : (
+                 <span className="text-[10px] font-bold px-3 py-1 text-slate-500 border border-slate-800 rounded">MASTER</span>
+              )}
             </div>
-            
-            <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
-              {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
