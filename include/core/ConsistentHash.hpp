@@ -29,4 +29,7 @@ public:
     void addNode(const std::string& nodeAddress);
     void removeNode(const std::string& nodeAddress);
     std::string getOwnerNode(const std::string& key);
+
+    // Zinda (Active) physical nodes ki list nikalne ke liye
+    std::vector<std::string> getUniquePhysicalNodes();
 };

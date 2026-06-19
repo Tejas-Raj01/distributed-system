@@ -10,6 +10,8 @@ const ControlCenter = () => {
   const [gossipPulse, setGossipPulse] = useState(false);
   const [injectCount, setInjectCount] = useState(1000); 
   const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
+  const [spawnCount, setSpawnCount] = useState(1);
+  const maxNodes = 10;
 
   // ZUSTAND: Notice ki humne yahan se addData aur removeData hata diya hai!
   const { 
@@ -160,21 +162,52 @@ const ControlCenter = () => {
     addLog("[INFO] To connect Node 8086, boot up the C++ backend on port 8086!");
   };
 
-  const handleToggleStatus = async (id) => {
-    if (isInjecting || isBackendOffline) return;
-    toggleNodeStatus(id); 
-    const node = clusterState.find(n => n.id === id);
-    const nextStatus = node.status === "alive" ? "DEAD" : "ALIVE";
-    
-    addLog(`[GOSSIP] Node ${id} marked as ${nextStatus} in UI.`);
-    if (nextStatus === "DEAD") {
-      try {
-        addLog(`[ADMIN] Sending remote KILL signal to port ${id}...`);
-        await apiService.killNode(id);
-        addLog(`[SUCCESS] Node ${id} gracefully shut down.`);
-      } catch (err) {
-        addLog(`[NETWORK] Node ${id} unreachable. Assume already dead.`);
+  const handleToggleStatus = async (nodeId) => {
+    console.log(`> [CHAOS] Sending kill signal to Node on port ${nodeId}...`);
+    try {
+      await fetch('http://127.0.0.1:8080/admin/kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `port=${nodeId}` 
+      });
+      // 1 second baad C++ Gossip khud bata dega ki node offline chala gaya hai!
+    } catch (error) {
+      console.error("> [ERROR] Failed to execute chaos engineering:", error);
+    }
+  };
+
+  // Naya node C++ backend ke through spawn karne ka function
+  // Dynamic Spawner Function
+  const spawnNewNode = async () => {
+    // Agar 10 nodes pure ho gaye toh aur add nahi karne denge
+    if (spawnCount > maxNodes) {
+      console.warn("> [UI] Cluster has reached its maximum capacity of 10 extra nodes.");
+      return;
+    }
+
+    // Backend ports automatically calculate honge (8086, 8088, 8090...)
+    const nextPort = 8084 + (spawnCount * 2);
+
+    console.log(`> [UI] Spawning Node ${spawnCount} (Internal Port: ${nextPort})...`);
+    try {
+      const response = await fetch('http://127.0.0.1:8080/admin/spawn', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `port=${nextPort}` 
+      });
+
+      if (response.ok) {
+        console.log(`> [SUCCESS] Node ${spawnCount} is successfully booting up in the background!`);
+        // Counter ko +1 badha do agle node ke liye
+        setSpawnCount(prevCount => prevCount + 1); 
+      } else {
+        const data = await response.json();
+        console.error("> [ERROR] Failed to spawn:", data.error);
       }
+    } catch (error) {
+      console.error("> [CRITICAL] Could not connect to Master Node:", error);
     }
   };
 
@@ -254,27 +287,44 @@ const ControlCenter = () => {
           ⚖️ REBALANCE CLUSTER
         </button>
 
-        <button disabled={isInjecting || isBackendOffline} onClick={handleAddNode} className="px-4 py-3 rounded font-bold text-sm transition border bg-amber-600/20 border-amber-500/50 text-amber-400 hover:bg-amber-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
-          ➕ CONNECT NODE 8086
-        </button>
+        <button 
+  onClick={spawnNewNode} 
+  disabled={spawnCount > maxNodes}
+  className={`w-full py-3 rounded uppercase font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2 ${
+    spawnCount > maxNodes 
+      ? 'bg-gray-800 text-gray-500 border border-gray-600 cursor-not-allowed' 
+      : 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-800/50'
+  }`}
+>
+  {spawnCount > maxNodes ? (
+    'CLUSTER FULL (MAX 10 NODES)'
+  ) : (
+    <><span className="text-xl">+</span> CONNECT NEW NODE {spawnCount}</>
+  )}
+</button>
       </div>
 
       {/* CLUSTER STATUS */}
       <div className={`flex flex-col gap-3 mt-8 pb-4 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
-        <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
-        {clusterState.map(node => (
-          <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
-            <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
-            <div className="flex items-center gap-2 relative z-10">
-              <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
-              <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {node.id || node.port}</span>
-            </div>
-            <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
-              {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
-            </button>
-          </div>
-        ))}
+  <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
+  
+  {/* 🚀 THE FIX: clusterState ko pehle ID se sort kiya, fir map ke index ka use kiya */}
+  {[...clusterState].sort((a, b) => a.id - b.id).map((node, index) => (
+    <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
+      <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
+      <div className="flex items-center gap-2 relative z-10">
+        <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
+        
+        {/* 🚀 THE FIX: Yahan 'Node {node.id}' ki jagah 'Node {index + 1}' kar diya */}
+        <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1}</span>
       </div>
+      
+      <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
+        {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
+      </button>
+    </div>
+  ))}
+</div>
     </div>
   );
 };

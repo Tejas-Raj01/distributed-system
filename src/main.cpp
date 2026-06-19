@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdlib> // std::stoi ke liye
 #include <functional>
+#include <vector>  // 🚀 NAYA: std::vector use karne ke liye include kiya
 
 // Saare custom modules include karein
 #include "../include/core/StorageEngine.hpp"
@@ -43,18 +44,20 @@ int main(int argc, char* argv[]) {
     ConsistentHash hashRing(100); // 100 virtual nodes per physical node
     hashRing.addNode(myAddress); // Apne aap ko ring mein daalo
 
-    // Agar start karte waqt dusre servers (Peers) ke address diye hain, toh unko ring mein dalo
+    // 🚀 THE FIX: Command line se peers nikal kar unko seedNodes vector mein daalna
+    std::vector<std::string> seedNodes;
     for (int i = 2; i < argc; ++i) {
         std::string peerAddress = argv[i];
         hashRing.addNode(peerAddress);
+        seedNodes.push_back(peerAddress); // Naye discovery engine ke liye list banayi
     }
 
-    // 5. Gossip Protocol (Failure Detection)
-    Gossip gossip(&hashRing);
-    for (int i = 2; i < argc; ++i) {
-        gossip.addPeer(argv[i]); // Peers ki heartbeat monitor karna shuru karo
-    }
-    gossip.start(); // Background thread ON
+    // 5. Gossip Protocol (Failure Detection & Discovery)
+    // 🚀 THE FIX: Constructor mein ab 'myAddress' pass ho raha hai
+    Gossip gossip(myAddress, &hashRing);
+    
+    // 🚀 THE FIX: start() function mein ab 'seedNodes' pass ho rahe hain taaki ping ja sake
+    gossip.start(seedNodes); 
 
     // 6. Replicator setup
     Replicator replicator;

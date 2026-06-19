@@ -1,5 +1,6 @@
 #include "../../include/core/ConsistentHash.hpp"
 #include <functional> // std::hash ke liye
+#include <algorithm>
 
 // Constructor
 ConsistentHash::ConsistentHash(int v_nodes) : virtual_nodes(v_nodes) {}
@@ -66,4 +67,18 @@ std::string ConsistentHash::getOwnerNode(const std::string& key) {
 
     // Physical node ka address return karo
     return it->second;
+}
+
+// NAYA: Backend se asli physical nodes ki list nikalna
+std::vector<std::string> ConsistentHash::getUniquePhysicalNodes() {
+    std::shared_lock<std::shared_mutex> lock(ring_lock);
+    std::vector<std::string> unique_nodes;
+    
+    // Hash Ring mein loop chalakar unique addresses filter out karna
+    for (const auto& pair : hashRing) {
+        if (std::find(unique_nodes.begin(), unique_nodes.end(), pair.second) == unique_nodes.end()) {
+            unique_nodes.push_back(pair.second);
+        }
+    }
+    return unique_nodes;
 }

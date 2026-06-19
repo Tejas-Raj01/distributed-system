@@ -14,14 +14,30 @@ const HashRing = () => {
 
   // Malik (Owner Node) dhoondhne ka logic (For coloring the dots)
   const getOwnerNode = (keyAngle) => {
-    const activeNodes = clusterState.filter(n => n.status === "alive");
-    if (activeNodes.length === 0) return { color: "#64748b", id: "Offline" }; 
-    let sortedNodes = [...activeNodes].sort((a, b) => a.angle - b.angle);
-    for (let node of sortedNodes) {
-      if (node.angle >= keyAngle) return node;
+  const activeNodes = clusterState.filter(n => n.status === "alive");
+  if (activeNodes.length === 0) return { color: "#64748b", id: "Offline", displayId: "Offline" }; 
+  
+  // Ring ke hisaab se nodes ko angle par sort kiya
+  let sortedNodes = [...activeNodes].sort((a, b) => a.angle - b.angle);
+  
+  // 🚀 THE FIX: Asli sequential number nikalne ke liye nodes ko unke asli ID se sort kiya
+  const allSortedById = [...clusterState].sort((a, b) => a.id - b.id);
+  
+  let targetNode = sortedNodes[0]; // Default fallback agar circle cross ho jaye
+  
+  for (let node of sortedNodes) {
+    if (node.angle >= keyAngle) {
+      targetNode = node;
+      break;
     }
-    return sortedNodes[0]; 
-  };
+  }
+  
+  // Target node ka asli number pata lagana (e.g., 8080 -> Index 0 -> Node 1)
+  const nodeIndex = allSortedById.findIndex(n => n.id === targetNode.id) + 1;
+  
+  // Node return karte waqt usme ek safe 'displayId' daal diya
+  return { ...targetNode, displayId: `Node ${nodeIndex}` }; 
+};
 
   // 🖌️ THE CANVAS LERP RENDERING ENGINE (Pillar 4 Animation)
   useEffect(() => {
