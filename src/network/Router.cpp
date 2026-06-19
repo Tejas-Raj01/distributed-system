@@ -8,18 +8,14 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
-#include <regex> // 📦 NAYA: JSON array ko unpack karne ke liye
+#include <regex> 
 
-// Global ClusterConfig instance ko consume karne ke liye extern use kiya
 extern ClusterConfig global_config;
 
-// Constructor: Saare pointers ko initialize karna aur routes setup karna
-// Constructor: Saare pointers ko initialize karna aur routes setup karna
 Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch, 
                WAL* w, Gossip* g, Replicator* r)
     : myAddress(address), storage(se), hashRing(ch), wal(w), gossip(g), replicator(r) {
     
-    // 🚀 THE GHOST NODE FIX: Node ko sabse pehle apni Hash Ring mein khud ko add karna hoga!
     if (hashRing != nullptr) {
         hashRing->addNode(myAddress);
         std::cout << "[HASH RING] Added myself (" << myAddress << ") to the ring.\n";
@@ -28,15 +24,18 @@ Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch
     setupRoutes();
 }
 
-// APIs aur Unka Logic map karna
 void Router::setupRoutes() {
     
-    // 1. Handle Pre-flight OPTIONS requests (Browser ke CORS preflight check ke liye)
-    server.Options("(.*)", [](const httplib::Request& req, httplib::Response& res) {
+    // ==========================================
+    // 🛡️ 1. THE ULTIMATE CORS VIP PASS (PREFLIGHT)
+    // ==========================================
+    server.Options(R"(.*)", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        res.status = 200;
+        // 🚀 THE MAGIC: Ngrok header is now allowed!
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning");
+        res.set_header("Access-Control-Max-Age", "86400"); // Cache it
+        res.status = 204; 
     });
 
     // 2. GOSSIP HEARTBEAT API (/ping)
@@ -49,6 +48,7 @@ void Router::setupRoutes() {
     // 3. CONFIG SYNC ENDPOINT (UI -> Backend)
     server.Post("/admin/config", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
         auto parse_json_param = [&](const std::string& key) {
             size_t pos = req.body.find("\"" + key + "\":");
@@ -70,9 +70,7 @@ void Router::setupRoutes() {
         res.set_content(R"({"status":"success"})", "application/json");
     });
 
-    // ==========================================
-    // 🗣️ 4. GOSSIP API: Node Discovery Endpoint (THE TRIGGER)
-    // ==========================================
+    // 4. GOSSIP API
     server.Post("/internal/gossip", [this](const httplib::Request& req, httplib::Response& res) {
         if (!req.has_param("newNode")) {
             res.status = 400;
@@ -83,10 +81,9 @@ void Router::setupRoutes() {
         std::cout << "\n[ROUTER] 📨 Received Gossip intro from new node: " << newNode << "\n";
         
         if (this->gossip != nullptr) {
-            this->gossip->receiveGossip(newNode); // Hash Ring Update karega
+            this->gossip->receiveGossip(newNode); 
         }
 
-        // 🚀 MASTERSTROKE: Background thread mein data rebalance start taaki main thread block na ho!
         std::thread([this, newNode]() {
             this->initiateRebalance(newNode);
         }).detach();
@@ -95,13 +92,10 @@ void Router::setupRoutes() {
         res.set_content("Welcome to the cluster!", "text/plain");
     });
 
-    // ==========================================
-    // 🚚 5. REBALANCE RECEIVER: Naya Node Data Accept Karega
-    // ==========================================
+    // 5. REBALANCE RECEIVER
     server.Post("/internal/transfer", [this](const httplib::Request& req, httplib::Response& res) {
         std::cout << "\n[TRANSFER] 📦 Incoming bulk data transfer received...\n";
         
-        // Regex magic: JSON format {"k":"key_name","v":"value_name"} se data nikalna
         std::regex e("\\{\"k\":\"(.*?)\",\"v\":\"(.*?)\"\\}");
         std::sregex_iterator iter(req.body.begin(), req.body.end(), e);
         std::sregex_iterator end;
@@ -110,8 +104,6 @@ void Router::setupRoutes() {
         while (iter != end) {
             std::string extractedKey = (*iter)[1];
             std::string extractedVal = (*iter)[2];
-            
-            // Naya node seedha apni local RAM (Vault) mein data save kar lega
             this->storage->put(extractedKey, extractedVal);
             count++;
             ++iter;
@@ -131,9 +123,10 @@ void Router::setupRoutes() {
         res.status = 200;
     });
 
-    // 7. PUBLIC PUT API (Dynamic Quorum Enforcer)
+    // 7. PUBLIC PUT API
     server.Post("/put", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 
         if (!req.has_param("key") || !req.has_param("value")) {
             res.status = 400;
@@ -145,7 +138,6 @@ void Router::setupRoutes() {
         std::string value = req.get_param_value("value");
         int ttl = req.has_param("ttl") ? std::stoi(req.get_param_value("ttl")) : 0;
         
-        // 🚀 NAYA: Ab hum sirf "W" nahi, "N" (Total Copies) bhi nikal rahe hain
         int current_W, current_N;
         {
             std::shared_lock<std::shared_mutex> lock(global_config.config_lock);
@@ -158,16 +150,14 @@ void Router::setupRoutes() {
         if (ownerNode == myAddress) {
             wal->appendLog("PUT", key, value);
             storage->put(key, value, ttl);
-            int acks = 1; // Local RAM mein save ho gaya, toh 1 ACK mil gaya
+            int acks = 1; 
             
-            // 🚀 THE MASTERSTROKE: 100% Dynamic Replication
             auto activeNodes = hashRing->getUniquePhysicalNodes();
-            int replicasNeeded = current_N - 1; // Agar N=3 hai, toh 1 khud rakha, 2 padosiyon ko dena hai
+            int replicasNeeded = current_N - 1; 
             int replicasSent = 0;
 
             for (const auto& node : activeNodes) {
                 if (node != myAddress && replicasSent < replicasNeeded) {
-                    // Seedha padosi ko call maro, koi hardcoded IP nahi!
                     bool replicaAck = replicator->forwardToReplica(key, value, node, ttl);
                     if (replicaAck) acks++;
                     replicasSent++;
@@ -181,7 +171,7 @@ void Router::setupRoutes() {
                 storage->remove(key); 
                 wal->appendLog("DELETE", key, ""); 
                 res.status = 503; 
-                res.set_content(R"({"error": true, "message": "Write Quorum Failed: Needed )" + std::to_string(current_W) + R"(, Got )" + std::to_string(acks) + R"("})", "application/json");
+                res.set_content(R"({"error": true, "message": "Write Quorum Failed"})", "application/json");
             }
         } else {
             httplib::Client cli("http://" + ownerNode);
@@ -215,6 +205,7 @@ void Router::setupRoutes() {
     // 9. PUBLIC GET API
     server.Get("/get", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 
         if (!req.has_param("key")) {
             res.status = 400;
@@ -263,6 +254,7 @@ void Router::setupRoutes() {
     // 10. PUBLIC DELETE API
     server.Delete("/delete", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
 
         std::string key = req.get_param_value("key");
         if (key.empty()) {
@@ -274,7 +266,6 @@ void Router::setupRoutes() {
         bool isDeleted = storage->remove(key);
         wal->appendLog("DELETE", key, "");
 
-        // 🚀 THE MASTERSTROKE: Dynamic Delete Forwarding (Broadcast to all active nodes)
         auto activeNodes = hashRing->getUniquePhysicalNodes();
         for (const auto& node : activeNodes) {
             if (node != myAddress) {
@@ -305,27 +296,23 @@ void Router::setupRoutes() {
     // ==========================================
     server.Get("/admin/status", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
-        // 1. Vault se asli data nikalna
         auto allData = storage->getAllData();
-        
-        // 2. Hash Ring se asli ZINDA nodes nikalna
         auto activeNodes = hashRing->getUniquePhysicalNodes();
 
-        // 3. 🚀 THE FIX: Dynamic Nodes JSON (Evenly Spaced UI)
         std::string nodesJson = "[";
         bool firstNode = true;
         std::vector<std::string> colors = {"#06b6d4", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444"};
         int cIdx = 0;
         
         int totalNodes = activeNodes.size();
-        if (totalNodes == 0) totalNodes = 1; // Division by zero se bachne ke liye
+        if (totalNodes == 0) totalNodes = 1; 
         
         for (const auto& node : activeNodes) {
             size_t colon = node.find(':');
             int port = (colon != std::string::npos) ? std::stoi(node.substr(colon + 1)) : 0;
             
-            // FNV-1a Hash ki jagah hum nodes ko 360 degrees mein barabar baant rahe hain
             int angle = (cIdx * 360) / totalNodes;
 
             if (!firstNode) nodesJson += ",";
@@ -336,7 +323,6 @@ void Router::setupRoutes() {
         }
         nodesJson += "]";
 
-        // 4. Data (Keys) JSON banana (Dots abhi bhi asli FNV hash par hi rahenge!)
         std::string dataMapJson = "[";
         bool firstDot = true;
         for (const auto& item : allData) {
@@ -349,7 +335,6 @@ void Router::setupRoutes() {
         }
         dataMapJson += "]";
 
-        // 5. Final Payload
         std::string jsonResponse = "{"
             "\"nodes\": " + nodesJson + ","
             "\"dataMap\": " + dataMapJson +
@@ -358,11 +343,10 @@ void Router::setupRoutes() {
         res.set_content(jsonResponse, "application/json");
     });
 
-    // ==========================================
-    // 🚀 13. ADMIN API: Auto-Spawn New Node (The Orchestrator)
-    // ==========================================
+    // 13. ADMIN API: Auto-Spawn New Node
     server.Post("/admin/spawn", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
         std::string newPort = req.has_param("port") ? req.get_param_value("port") : "8086";
         std::string cmd = "./build/kv_server " + newPort + " " + myAddress + " > data/node_" + newPort + ".log 2>&1 &";
@@ -380,11 +364,10 @@ void Router::setupRoutes() {
         }
     });
 
-    // ==========================================
-    // ☠️ 14. ADMIN API: Chaos Engineering (True Kill)
-    // ==========================================
+    // 14. ADMIN API: Chaos Engineering (Kill)
     server.Post("/admin/kill", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
         std::string targetPort = req.has_param("port") ? req.get_param_value("port") : "";
         
@@ -402,66 +385,47 @@ void Router::setupRoutes() {
         res.set_content(R"({"status": "success", "message": "Node terminated"})", "application/json");
     });
 
-    // ==========================================
-    // ⚖️ 15. ADMIN API: Cluster Rebalance
-    // ==========================================
+    // 15. ADMIN API: Cluster Rebalance
     server.Get("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
-        
-        // Kyunki Gossip Protocol aur Hash Ring auto-balancing handle karte hain,
-        // hum yahan UI ko explicitly success signal bhej rahe hain.
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         std::cout << "\n[ADMIN] ⚖️ UI Triggered Manual Rebalance (Handled flawlessly by Gossip)...\n";
-        
         res.status = 200;
-        // UI ko jo JSON payload chahiye, wo hum bhej rahe hain
         res.set_content(R"({"status": "success", "message": "Cluster balanced dynamically", "keys_transferred": 0})", "application/json");
     });
     
-    // Agar frontend POST request use kar raha hai, toh safety ke liye POST bhi daal dete hain
     server.Post("/admin/rebalance", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         std::cout << "\n[ADMIN] ⚖️ UI Triggered Manual Rebalance (Handled flawlessly by Gossip)...\n";
         res.status = 200;
         res.set_content(R"({"status": "success", "message": "Cluster balanced dynamically", "keys_transferred": 0})", "application/json");
     });
 }
 
-// ==========================================
-// 🚀 THE HTTP SENDER LOGIC: Purana Node Data Pack Karke Bhejega
-// ==========================================
 void Router::initiateRebalance(const std::string& newNodeAddress) {
     std::cout << "\n[REBALANCE] 🔍 Scanning local storage for keys belonging to " << newNodeAddress << "...\n";
     
-    // 1. Vault se saara data nikalna (Shared Lock ke sath safely)
     auto allData = storage->getAllData();
-    
     std::string jsonBody = "[";
     bool isFirst = true;
     int transferCount = 0;
 
-    // 2. Loop chalakar check karna kaunsi key donate karni hai
     for (const auto& pair : allData) {
         std::string key = pair.first;
         std::string val = pair.second;
-
-        // Hash Ring se pucho: "Kya is key ka naya malik 'newNodeAddress' hai?"
         std::string currentOwner = hashRing->getOwnerNode(key);
         
         if (currentOwner == newNodeAddress) {
             if (!isFirst) jsonBody += ",";
-            
-            // JSON String build karna: {"k":"user_1", "v":"delhi"}
             jsonBody += "{\"k\":\"" + key + "\",\"v\":\"" + val + "\"}";
             isFirst = false;
             transferCount++;
-
-            // 3. Apni memory se delete karna (Kyunki ab yeh data donate ho raha hai)
             storage->remove(key);
         }
     }
     jsonBody += "]";
 
-    // Agar koi data transfer ke liye nahi mila toh yahi ruk jao
     if (transferCount == 0) {
         std::cout << "[REBALANCE] No keys needed to be transferred. Node is balanced.\n";
         return;
@@ -469,16 +433,14 @@ void Router::initiateRebalance(const std::string& newNodeAddress) {
 
     std::cout << "[REBALANCE] 📦 Packing " << transferCount << " keys. Dispatching to " << newNodeAddress << "...\n";
 
-    // 4. Target node ka host aur port nikalna
     size_t colonPos = newNodeAddress.find(':');
     if (colonPos == std::string::npos) return;
     
     std::string host = newNodeAddress.substr(0, colonPos);
     int port = std::stoi(newNodeAddress.substr(colonPos + 1));
 
-    // 5. cpp-httplib ka client use karke naye node par POST marna
     httplib::Client cli(host, port);
-    cli.set_connection_timeout(5, 0); // Bulk transfer mein thoda time lag sakta hai
+    cli.set_connection_timeout(5, 0); 
     
     auto res = cli.Post("/internal/transfer", jsonBody, "application/json");
 

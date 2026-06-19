@@ -27,15 +27,19 @@ const ControlCenter = () => {
   useEffect(() => {
     const syncLiveState = async () => {
       try {
+        // 🚀 NAYA: URL check karne ke liye print karo
+        console.log("FETCHING FROM:", BASE_URL); 
+        
         const data = await apiService.fetchClusterState();
         
-        // C++ backend hi angle aur data bhejega, React sirf paint karega
         useStore.setState({
           clusterState: data.nodes || [],
           dataRing: data.dataMap || []
         });
         setIsBackendOffline(false);
       } catch (err) {
+        // 🚀 NAYA: Asli error console mein dikhao!
+        console.error("SYNC FAILED:", err); 
         setIsBackendOffline(true);
       }
     };
