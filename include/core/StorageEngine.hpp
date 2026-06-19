@@ -44,6 +44,8 @@ public:
     std::optional<std::string> get(const std::string& key);
     bool remove(const std::string& key);
 
+    void clearAll();
+
     // NAYA: Data rebalancing ke liye saara data nikalne ka function
     std::vector<std::pair<std::string, std::string>> getAllData();
 };

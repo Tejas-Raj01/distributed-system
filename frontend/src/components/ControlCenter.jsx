@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import useStore from '../store/useStore';
-import { apiService } from '../services/api'; // 📡 THE MISSING IMPORT
+import { apiService } from '../services/api'; 
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -15,48 +15,35 @@ const ControlCenter = () => {
   const [spawnCount, setSpawnCount] = useState(1);
   const maxNodes = 10;
 
-  // ZUSTAND: Notice ki humne yahan se addData aur removeData hata diya hai!
   const { 
     clusterState, isInjecting, isBackendOffline,
     addLog, toggleNodeStatus, setIsInjecting, setIsBackendOffline 
   } = useStore();
 
-  // ==========================================
-  // 💓 PILLAR 3: SERVER-AUTHORITATIVE HEARTBEAT
-  // ==========================================
   useEffect(() => {
     const syncLiveState = async () => {
       try {
-        // 🚀 NAYA: URL check karne ke liye print karo
         console.log("FETCHING FROM:", BASE_URL); 
-        
         const data = await apiService.fetchClusterState();
-        
         useStore.setState({
           clusterState: data.nodes || [],
           dataRing: data.dataMap || []
         });
         setIsBackendOffline(false);
       } catch (err) {
-        // 🚀 NAYA: Asli error console mein dikhao!
         console.error("SYNC FAILED:", err); 
         setIsBackendOffline(true);
       }
     };
-
     const heartbeatTimer = setInterval(syncLiveState, 1000);
     return () => clearInterval(heartbeatTimer);
   }, [setIsBackendOffline]);
 
-  // Visual Pulse Timer
   useEffect(() => {
     const pulseTimer = setInterval(() => setGossipPulse(prev => !prev), 2000);
     return () => clearInterval(pulseTimer);
   }, []);
 
-  // ==========================================
-  // ⚖️ PILLAR 1: CONFIG SYNC
-  // ==========================================
   const handleUpdateConfig = async () => {
     if (isInjecting || isBackendOffline) return;
     addLog(`[CONFIG] Syncing Rules with C++: N=${config.N}, W=${config.W}, R=${config.R}`);
@@ -68,16 +55,12 @@ const ControlCenter = () => {
     }
   };
 
-  // ==========================================
-  // 📡 PILLAR 2: DECOUPLED CRUD OPERATIONS
-  // ==========================================
   const handlePut = async () => {
     if (!keyInput || !valInput || isInjecting || isBackendOffline) return;
     addLog(`[ROUTER] Sending PUT Request: '${keyInput}'`);
     try {
       await apiService.putData(keyInput, valInput);
       addLog(`[QUORUM] SUCCESS: Key '${keyInput}' saved.`);
-      // Notice: Yahan addData() call nahi ho raha, Heartbeat apne aap UI update karega!
       setKeyInput(""); setValInput("");
     } catch (err) { 
       addLog(`[ERROR] ${err.message}`); 
@@ -112,63 +95,61 @@ const ControlCenter = () => {
     }
   };
 
- const injectStressTest = async () => {
-  if (isInjecting || isBackendOffline) return;
-  setIsInjecting(true);
-  addLog(`[CHAOS] 🚀 Initializing Adaptive Batch Request Generator for ${injectCount} keys...`);
+  const injectStressTest = async () => {
+    if (isInjecting || isBackendOffline) return;
+    setIsInjecting(true);
+    addLog(`[CHAOS] 🚀 Initializing Adaptive Batch Request Generator for ${injectCount} keys...`);
 
-  const BATCH_SIZE = 50;     // Hardware aur browser runtime optimization ke liye perfect concurrency threshold
-  const THROTTLE_DELAY = 80;  // Har batch execution burst ke beech ka micro recovery period (ms)
+    const BATCH_SIZE = 50;     
+    const THROTTLE_DELAY = 80;  
 
-  for (let i = 0; i < injectCount; i += BATCH_SIZE) {
-    let batchPromises = [];
-    const currentBatchSize = Math.min(BATCH_SIZE, injectCount - i);
+    for (let i = 0; i < injectCount; i += BATCH_SIZE) {
+      let batchPromises = [];
+      const currentBatchSize = Math.min(BATCH_SIZE, injectCount - i);
+      addLog(`[BATCHING] Dispatching thread chunk: keys range ${i} to ${i + currentBatchSize}...`);
 
-    addLog(`[BATCHING] Dispatching thread chunk: keys range ${i} to ${i + currentBatchSize}...`);
+      for (let j = 0; j < currentBatchSize; j++) {
+        const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
+        batchPromises.push(
+          apiService.putData(randomKey, "test_data").catch((err) => {})
+        );
+      }
 
-    for (let j = 0; j < currentBatchSize; j++) {
-      const randomKey = `stress_${Math.floor(Math.random() * 999999)}`;
-      
-      // Request queue mein promise attach karna bina use await kiye (Parallelism inside chunk)
-      batchPromises.push(
-        apiService.putData(randomKey, "test_data")
-          .catch((err) => {
-            // Gracefully catch internal request drop taaki baaki pipeline crash na ho
-          })
-      );
+      await Promise.allSettled(batchPromises);
+      addLog(`[NETWORK] Burst Delivered. Pipeline synchronization: ${i + currentBatchSize}/${injectCount}`);
+
+      if (i + BATCH_SIZE < injectCount) {
+        await delay(THROTTLE_DELAY);
+      }
     }
+    setIsInjecting(false);
+    addLog(`[SUCCESS] 🔥 Advanced Stress Pipeline executed flawlessly with zero thread locking.`);
+  };
 
-    // 🛡️ AllSettled waits only for the current micro-burst of 50 requests
-    await Promise.allSettled(batchPromises);
-
-    addLog(`[NETWORK] Burst Delivered. Pipeline synchronization: ${i + currentBatchSize}/${injectCount}`);
-
-    // Main JavaScript event loop ko frame drop avoid karne ke liye short breathing room dena
-    if (i + BATCH_SIZE < injectCount) {
-      await delay(THROTTLE_DELAY);
+  const handleClearAll = async () => {
+    if (isInjecting || isBackendOffline) return;
+    if (!window.confirm("Kya aap sach me saara data delete karna chahte hain?")) return;
+    try {
+      await fetch(`${BASE_URL}/admin/clear`, {
+        method: 'POST',
+        headers: { 'ngrok-skip-browser-warning': 'true' }
+      });
+      addLog("[🧹 SYSTEM] Cluster memory wiped clean successfully!");
+    } catch (err) {
+      addLog("[CRITICAL] Failed to clear cluster data.");
     }
-  }
-
-  setIsInjecting(false);
-  addLog(`[SUCCESS] 🔥 Advanced Stress Pipeline executed flawlessly with zero thread locking.`);
-};
+  };
 
   const handleRebalance = async () => {
     if (isInjecting || isBackendOffline) return;
     addLog("[ADMIN] ⚖️ Triggering Cluster Rebalance...");
     try {
-      // 🚀 THE FIX: NGROK URL & HEADER
       const response = await fetch(`${BASE_URL}/admin/rebalance`, {
         headers: { 'ngrok-skip-browser-warning': 'true' }
       });
       const data = await response.json();
       addLog(`[REBALANCE] Process completed. Keys transferred: ${data.keys_transferred}`);
     } catch (err) { addLog("[CRITICAL] Rebalance failed."); }
-  };
-
-  const handleAddNode = () => {
-    if (isInjecting || isBackendOffline) return;
-    addLog("[INFO] To connect Node 8086, boot up the C++ backend on port 8086!");
   };
 
   const handleToggleStatus = async (nodeId) => {
@@ -179,24 +160,17 @@ const ControlCenter = () => {
         headers: { 'ngrok-skip-browser-warning': 'true' },
         body: `port=${nodeId}` 
       });
-      // 1 second baad C++ Gossip khud bata dega ki node offline chala gaya hai!
     } catch (error) {
       console.error("> [ERROR] Failed to execute chaos engineering:", error);
     }
   };
 
-  // Naya node C++ backend ke through spawn karne ka function
-  // Dynamic Spawner Function
   const spawnNewNode = async () => {
-    // Agar 10 nodes pure ho gaye toh aur add nahi karne denge
     if (spawnCount > maxNodes) {
       console.warn("> [UI] Cluster has reached its maximum capacity of 10 extra nodes.");
       return;
     }
-
-    // Backend ports automatically calculate honge (8086, 8088, 8090...)
     const nextPort = 8084 + (spawnCount * 2);
-
     console.log(`> [UI] Spawning Node ${spawnCount} (Internal Port: ${nextPort})...`);
     try {
       const response = await fetch(`${BASE_URL}/admin/spawn`, {
@@ -210,7 +184,6 @@ const ControlCenter = () => {
 
       if (response.ok) {
         console.log(`> [SUCCESS] Node ${spawnCount} is successfully booting up in the background!`);
-        // Counter ko +1 badha do agle node ke liye
         setSpawnCount(prevCount => prevCount + 1); 
       } else {
         const data = await response.json();
@@ -296,45 +269,48 @@ const ControlCenter = () => {
         <button disabled={isInjecting || isBackendOffline} onClick={handleRebalance} className="px-4 py-3 rounded font-bold text-sm transition border bg-emerald-600/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
           ⚖️ REBALANCE CLUSTER
         </button>
+        
+        {/* 🚀 YAHAN AAYA HAI NAYA BUTTON 🚀 */}
+        <button disabled={isInjecting || isBackendOffline} onClick={handleClearAll} className="px-4 py-3 rounded font-bold text-sm transition border bg-red-900/40 border-red-500/50 text-red-400 hover:bg-red-800/60 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 disabled:cursor-not-allowed">
+          🧹 CLEAR ALL CLUSTER DATA
+        </button>
 
         <button 
-  onClick={spawnNewNode} 
-  disabled={spawnCount > maxNodes}
-  className={`w-full py-3 rounded uppercase font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2 ${
-    spawnCount > maxNodes 
-      ? 'bg-gray-800 text-gray-500 border border-gray-600 cursor-not-allowed' 
-      : 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-800/50'
-  }`}
->
-  {spawnCount > maxNodes ? (
-    'CLUSTER FULL (MAX 10 NODES)'
-  ) : (
-    <><span className="text-xl">+</span> CONNECT NEW NODE {spawnCount}</>
-  )}
-</button>
+          onClick={spawnNewNode} 
+          disabled={spawnCount > maxNodes}
+          className={`w-full py-3 rounded uppercase font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2 ${
+            spawnCount > maxNodes 
+              ? 'bg-gray-800 text-gray-500 border border-gray-600 cursor-not-allowed' 
+              : 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50 hover:bg-emerald-800/50'
+          }`}
+        >
+          {spawnCount > maxNodes ? (
+            'CLUSTER FULL (MAX 10 NODES)'
+          ) : (
+            <><span className="text-xl">+</span> CONNECT NEW NODE {spawnCount}</>
+          )}
+        </button>
       </div>
 
       {/* CLUSTER STATUS */}
       <div className={`flex flex-col gap-3 mt-8 pb-4 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
-  <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
-  
-  {/* 🚀 THE FIX: clusterState ko pehle ID se sort kiya, fir map ke index ka use kiya */}
-  {[...clusterState].sort((a, b) => a.id - b.id).map((node, index) => (
-    <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
-      <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
-      <div className="flex items-center gap-2 relative z-10">
-        <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
+        <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
         
-        {/* 🚀 THE FIX: Yahan 'Node {node.id}' ki jagah 'Node {index + 1}' kar diya */}
-        <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1}</span>
+        {[...clusterState].sort((a, b) => a.id - b.id).map((node, index) => (
+          <div key={node.id} className="flex justify-between items-center bg-slate-950 p-3 rounded border border-slate-800 relative overflow-hidden">
+            <div className={`absolute top-0 right-0 w-16 h-full transition-opacity duration-300 ${gossipPulse ? 'opacity-30' : 'opacity-10'}`} style={{background: `linear-gradient(to left, ${node.color || '#06b6d4'}, transparent)`}}></div>
+            <div className="flex items-center gap-2 relative z-10">
+              <span className={`w-3 h-3 rounded-full ${node.status === "alive" ? "animate-pulse" : ""}`} style={{ backgroundColor: node.status === "alive" ? (node.color || "#06b6d4") : "#334155" }}></span>
+              
+              <span className={`font-mono ${node.status === "alive" ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1}</span>
+            </div>
+            
+            <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
+              {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
+            </button>
+          </div>
+        ))}
       </div>
-      
-      <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(node.id)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${node.status === "alive" ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
-        {node.status === "alive" ? "☠️ KILL" : "➕ REVIVE"}
-      </button>
-    </div>
-  ))}
-</div>
     </div>
   );
 };

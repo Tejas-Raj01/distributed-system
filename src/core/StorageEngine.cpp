@@ -135,3 +135,14 @@ std::vector<std::pair<std::string, std::string>> StorageEngine::getAllData() {
     }
     return all_data;
 }
+
+// ==========================================
+// 🧹 CLEAR ALL DATA (For UI Reset Button)
+// ==========================================
+void StorageEngine::clearAll() {
+    // Thread-safety ke liye pehle memory ko lock karenge (Unique Lock kyunki write operation hai)
+    std::unique_lock<std::shared_mutex> lock(rw_lock);
+    
+    // C++ map ka in-built function jo poori dictionary khali kar deta hai
+    dataStore.clear(); 
+}

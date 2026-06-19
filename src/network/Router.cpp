@@ -401,6 +401,26 @@ void Router::setupRoutes() {
         res.status = 200;
         res.set_content(R"({"status": "success", "message": "Cluster balanced dynamically", "keys_transferred": 0})", "application/json");
     });
+
+    // ==========================================
+    // 🧹 ADMIN API: Clear All Data (Reset Cluster)
+    // ==========================================
+    server.Post("/admin/clear", [this](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+
+        std::cout << "\n[ADMIN] 🧹 Clearing all cluster memory and log files...\n";
+        
+        // 1. Local RAM khali karo
+        this->storage->clearAll(); // Ensure aapke StorageEngine mein clear() function ho
+
+        // 2. WAL file ko khali karo (Truncate)
+        std::string cmd = "rm -f data/*";
+        std::system(cmd.c_str());
+
+        res.status = 200;
+        res.set_content(R"({"status": "success", "message": "Cluster memory wiped clean!"})", "application/json");
+    });
 }
 
 void Router::initiateRebalance(const std::string& newNodeAddress) {
