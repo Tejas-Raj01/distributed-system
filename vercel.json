@@ -1,7 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/((?!api/.*).*)",
+      "source": "/api/backend/:path*",
+      "destination": "https://paycheck-polar-wildfire.ngrok-free.dev/:path*"
+    },
+    {
+      "source": "/((?!api/backend/).*)",
       "destination": "/index.html"
     }
   ]

@@ -1,22 +1,15 @@
 // frontend/src/services/api.js
 
-// 🚀 THE FIX: Use Vercel Serverless Function as a Proxy in Production to bypass ngrok CORS
 const isProd = import.meta.env.PROD;
-const hasVercelApi = !!import.meta.env.VITE_API_BASE_URL;
 
-// If we are in production on Vercel, we use the local /api/proxy function we created.
-// Otherwise, we hit the backend directly (localhost).
-const BASE_URL = (isProd && hasVercelApi) 
-  ? '/api/proxy?path=' 
+// 🚀 THE PERMANENT FIX: 
+// In production on Vercel, requests use Vercel's Native Edge Proxy (/api/backend).
+// In local development, requests hit the local C++ server directly (http://localhost:8080).
+const BASE_URL = isProd 
+  ? '/api/backend' 
   : (typeof window !== 'undefined' ? `http://${window.location.hostname}:8080` : 'http://localhost:8080');
 
-// Helper to construct the final URL depending on whether we use proxy
-const getUrl = (path) => {
-  if (BASE_URL.startsWith('/api/proxy')) {
-    return `${BASE_URL}${encodeURIComponent(path)}`;
-  }
-  return `${BASE_URL}${path}`;
-};
+const getUrl = (path) => `${BASE_URL}${path}`;
 
 export const apiService = {
   
