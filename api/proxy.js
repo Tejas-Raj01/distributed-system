@@ -1,4 +1,12 @@
 export default async function handler(req, res) {
+  // Always handle OPTIONS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning, Authorization');
+    return res.status(204).end();
+  }
+
   const targetBaseUrl = process.env.VITE_API_BASE_URL || 'https://paycheck-polar-wildfire.ngrok-free.dev';
   
   const path = req.query.path || '';
@@ -19,7 +27,7 @@ export default async function handler(req, res) {
       method: req.method,
       headers: {
         'ngrok-skip-browser-warning': 'true',
-        'User-Agent': 'Vercel-Proxy-Server',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Content-Type': req.headers['content-type'] || 'application/json',
       },
     };
