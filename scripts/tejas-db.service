@@ -1,0 +1,13 @@
+[Unit]
+Description=Tejas-DB Distributed Key-Value Store & Dashboard
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/home/devian/Projects/distributed-system/scripts/start_server.sh
+ExecStop=/home/devian/Projects/distributed-system/scripts/stop_server.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

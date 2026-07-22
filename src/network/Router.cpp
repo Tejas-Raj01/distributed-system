@@ -349,6 +349,12 @@ void Router::setupRoutes() {
         res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
         std::string newPort = req.has_param("port") ? req.get_param_value("port") : "8086";
+        if (newPort.empty() || !std::all_of(newPort.begin(), newPort.end(), ::isdigit)) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid port number"})", "application/json");
+            return;
+        }
+
         std::string cmd = "./build/kv_server " + newPort + " " + myAddress + " > data/node_" + newPort + ".log 2>&1 &";
         
         std::cout << "\n[ORCHESTRATOR] 🚀 Spawning new background node on port " << newPort << "...\n";
@@ -370,8 +376,13 @@ void Router::setupRoutes() {
         res.set_header("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
         
         std::string targetPort = req.has_param("port") ? req.get_param_value("port") : "";
+        if (targetPort.empty() || !std::all_of(targetPort.begin(), targetPort.end(), ::isdigit)) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid target port number"})", "application/json");
+            return;
+        }
         
-        if (targetPort.empty() || targetPort == "8080") {
+        if (targetPort == "8080") {
             res.status = 400;
             res.set_content(R"({"error": "Cannot kill master node"})", "application/json");
             return;

@@ -1,7 +1,7 @@
 // frontend/src/services/api.js
 
-// 🚀 THE FIX: NGROK URL
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// 🚀 THE FIX: Dynamic Host API URL
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:8080` : 'http://localhost:8080');
 
 export const apiService = {
   

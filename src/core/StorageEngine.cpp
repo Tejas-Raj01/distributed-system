@@ -143,6 +143,8 @@ void StorageEngine::clearAll() {
     // Thread-safety ke liye pehle memory ko lock karenge (Unique Lock kyunki write operation hai)
     std::unique_lock<std::shared_mutex> lock(rw_lock);
     
-    // C++ map ka in-built function jo poori dictionary khali kar deta hai
+    // C++ map aur queue sabhi ko khali karna padega taaki LRU iterators dangling na rahein
     dataStore.clear(); 
+    lruQueue.clear();
+    lruMap.clear();
 }

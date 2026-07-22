@@ -2,9 +2,14 @@
 #include "../../include/core/StorageEngine.hpp" // Yahan poori definition chahiye kyunki recover() mein functions call honge
 #include <iostream>
 #include <sstream>
+#include <filesystem>
 
 // Constructor: File ko 'Append' mode mein open karega
 WAL::WAL(const std::string& path) : filepath(path) {
+    std::filesystem::path p(filepath);
+    if (p.has_parent_path()) {
+        std::filesystem::create_directories(p.parent_path());
+    }
     // std::ios::app ensures ki naya data hamesha file ke end mein add ho, purana delete na ho
     logFile.open(filepath, std::ios::app);
     if (!logFile.is_open()) {
