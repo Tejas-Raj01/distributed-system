@@ -1,13 +1,28 @@
 // frontend/src/services/api.js
 
-// 🚀 THE FIX: Dynamic Host API URL
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:8080` : 'http://localhost:8080');
+// 🚀 THE FIX: Use Vercel Serverless Function as a Proxy in Production to bypass ngrok CORS
+const isProd = import.meta.env.PROD;
+const hasVercelApi = !!import.meta.env.VITE_API_BASE_URL;
+
+// If we are in production on Vercel, we use the local /api/proxy function we created.
+// Otherwise, we hit the backend directly (localhost).
+const BASE_URL = (isProd && hasVercelApi) 
+  ? '/api/proxy?path=' 
+  : (typeof window !== 'undefined' ? `http://${window.location.hostname}:8080` : 'http://localhost:8080');
+
+// Helper to construct the final URL depending on whether we use proxy
+const getUrl = (path) => {
+  if (BASE_URL.startsWith('/api/proxy')) {
+    return `${BASE_URL}${encodeURIComponent(path)}`;
+  }
+  return `${BASE_URL}${path}`;
+};
 
 export const apiService = {
   
   // 1. PUT Data
   putData: async (key, value, ttl = 0) => {
-    const response = await fetch(`${BASE_URL}/put`, {
+    const response = await fetch(getUrl('/put'), {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -25,7 +40,7 @@ export const apiService = {
 
   // 2. GET Data
   getData: async (key) => {
-    const response = await fetch(`${BASE_URL}/get?key=${encodeURIComponent(key)}`, {
+    const response = await fetch(getUrl(`/get?key=${encodeURIComponent(key)}`), {
       headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
     });
     if (!response.ok) {
@@ -36,7 +51,7 @@ export const apiService = {
 
   // 3. DELETE Data
   deleteData: async (key) => {
-    const response = await fetch(`${BASE_URL}/delete?key=${encodeURIComponent(key)}`, {
+    const response = await fetch(getUrl(`/delete?key=${encodeURIComponent(key)}`), {
       method: 'DELETE',
       headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
     });
@@ -48,7 +63,7 @@ export const apiService = {
 
   // 4. Fetch Live Cluster State
   fetchClusterState: async () => {
-    const response = await fetch(`${BASE_URL}/admin/status`, {
+    const response = await fetch(getUrl('/admin/status'), {
       headers: { 'ngrok-skip-browser-warning': 'true' } // 🚀 MAGIC HEADER
     });
     if (!response.ok) {
@@ -59,7 +74,7 @@ export const apiService = {
 
   // 5. Remote Node Kill Switch
   killNode: async (port) => {
-    const response = await fetch(`${BASE_URL}/admin/kill`, {
+    const response = await fetch(getUrl('/admin/kill'), {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -75,7 +90,7 @@ export const apiService = {
 
   // 6. Quorum Config Sync
   updateConfig: async (config) => {
-    const response = await fetch(`${BASE_URL}/admin/config`, {
+    const response = await fetch(getUrl('/admin/config'), {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
