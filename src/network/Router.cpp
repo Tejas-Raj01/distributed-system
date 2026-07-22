@@ -29,13 +29,16 @@ void Router::setupRoutes() {
     // ==========================================
     // 🛡️ 1. THE ULTIMATE CORS VIP PASS (PREFLIGHT)
     // ==========================================
-    server.Options(R"(.*)", [](const httplib::Request& req, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        // 🚀 THE MAGIC: Ngrok header is now allowed!
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning");
-        res.set_header("Access-Control-Max-Age", "86400"); // Cache it
-        res.status = 204; 
+    server.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) -> httplib::Server::HandlerResponse {
+        if (req.method == "OPTIONS") {
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning");
+            res.set_header("Access-Control-Max-Age", "86400"); // Cache it
+            res.status = 204; 
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
     });
 
     // 2. GOSSIP HEARTBEAT API (/ping)
