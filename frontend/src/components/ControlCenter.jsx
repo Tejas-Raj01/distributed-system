@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import useStore from '../store/useStore';
 import { apiService } from '../services/api'; 
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const ControlCenter = () => {
@@ -141,10 +139,7 @@ const ControlCenter = () => {
     if (isInjecting || isBackendOffline) return;
     if (!window.confirm("Kya aap sach me saara data delete karna chahte hain?")) return;
     try {
-      await fetch(`${BASE_URL}/admin/clear`, {
-        method: 'POST',
-        headers: { 'ngrok-skip-browser-warning': 'true' }
-      });
+      await apiService.clearAllData();
       addLog("[🧹 SYSTEM] Cluster memory wiped clean successfully!");
     } catch (err) {
       addLog("[CRITICAL] Failed to clear cluster data.");
@@ -155,10 +150,7 @@ const ControlCenter = () => {
     if (isInjecting || isBackendOffline) return;
     addLog("[ADMIN] ⚖️ Triggering Cluster Rebalance...");
     try {
-      const response = await fetch(`${BASE_URL}/admin/rebalance`, {
-        headers: { 'ngrok-skip-browser-warning': 'true' }
-      });
-      const data = await response.json();
+      const data = await apiService.rebalanceCluster();
       addLog(`[REBALANCE] Process completed. Keys transferred: ${data.keys_transferred}`);
     } catch (err) { addLog("[CRITICAL] Rebalance failed."); }
   };
@@ -173,25 +165,11 @@ const ControlCenter = () => {
     try {
       if (isAlive) {
         console.log(`> [CHAOS] Sending kill signal to Node ${nodeId}...`);
-        await fetch(`${BASE_URL}/admin/kill`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/x-www-form-urlencoded', // <-- YEH MISSING THA!
-            'ngrok-skip-browser-warning': 'true' 
-          },
-          body: `port=${nodeId}` 
-        });
+        await apiService.killNode(nodeId);
         addLog(`[CHAOS] ☠️ Kill signal sent to Node ${nodeId}`);
       } else {
         console.log(`> [ORCHESTRATOR] Reviving Node ${nodeId}...`);
-        await fetch(`${BASE_URL}/admin/spawn`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'ngrok-skip-browser-warning': 'true' 
-          },
-          body: `port=${nodeId}` 
-        });
+        await apiService.spawnNode(nodeId);
         addLog(`[ORCHESTRATOR] ➕ Revive signal sent to Node ${nodeId}`);
       }
     } catch (error) {
@@ -203,18 +181,8 @@ const ControlCenter = () => {
     if (spawnCount > maxNodes) return;
     const nextPort = 8084 + (spawnCount * 2);
     try {
-      const response = await fetch(`${BASE_URL}/admin/spawn`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'ngrok-skip-browser-warning': 'true'
-        },
-        body: `port=${nextPort}` 
-      });
-
-      if (response.ok) {
-        setSpawnCount(prev => prev + 1); 
-      }
+      await apiService.spawnNode(nextPort);
+      setSpawnCount(prev => prev + 1); 
     } catch (error) {
       console.error("> [CRITICAL] Could not connect to Master Node:", error);
     }

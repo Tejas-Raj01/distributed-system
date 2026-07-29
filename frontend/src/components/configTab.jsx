@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import useStore from '../store/useStore';
+import { apiService } from '../services/api';
 
 const ConfigTab = () => {
   const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
@@ -8,12 +9,8 @@ const ConfigTab = () => {
   const handleUpdateConfig = async () => {
     addLog(`[CONFIG] Sending new Quorum rules to C++: N=${config.N}, W=${config.W}, R=${config.R}`);
     try {
-      const res = await fetch('http://127.0.0.1:8080/admin/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
-      });
-      if (res.ok) addLog("[CONFIG] Success: C++ Memory Updated!");
+      await apiService.updateConfig(config);
+      addLog("[CONFIG] Success: C++ Memory Updated!");
     } catch (err) {
       addLog("[CRITICAL] Failed to sync config with C++.");
     }
