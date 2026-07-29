@@ -167,7 +167,9 @@ void Router::setupRoutes() {
                 }
             }
 
-            if (acks >= current_W) {
+            int effective_W = std::min(current_W, static_cast<int>(activeNodes.size()));
+
+            if (acks >= effective_W) {
                 res.status = 200;
                 res.set_content(R"({"status": "success"})", "application/json");
             } else {
