@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://dd8d21a8ac963c2e-117-250-64-131.serveousercontent.com/:path*"
+      "destination": "https://0efbd769887c9393-117-250-64-131.serveousercontent.com/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
