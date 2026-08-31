@@ -13,9 +13,9 @@
 
 ## 🎙️ Executive Summary Answer (30-Second Elevator Pitch)
 
-> "Tejas-DB is a **masterless, peer-to-peer distributed Key-Value store** built in C++17 inspired by Amazon Dynamo. It eliminates single points of failure using **Consistent Hashing** (64-bit FNV-1a algorithm with 100 virtual nodes per server), guarantees durability via **Write-Ahead Logging (WAL)**, delivers high-performance concurrency with a **thread-safe LRU Storage Engine** using reader-writer locks (`std::shared_mutex`), and enforces consistency using **Strict Quorum Consensus** ($W=2, R=2, N=3$).
+> "Tejas-DB is a **masterless, peer-to-peer distributed Key-Value store** built in C++17 inspired by Amazon Dynamo. It eliminates single points of failure using **Consistent Hashing** (64-bit FNV-1a algorithm with 100 virtual nodes per server), guarantees durability via **Write-Ahead Logging (WAL)**, delivers high-performance concurrency with a **thread-safe LRU Storage Engine** using reader-writer locks (`std::shared_mutex`), and enforces consistency using **Strict Quorum Consensus** (W=2, R=2, N=3).
 >
-> When a write request `PUT("user:123", "Tejas")` arrives, any node can act as the **Coordinator**. It computes the hash, routes the key to the responsible owner node, writes to disk-backed WAL first, mutates memory, synchronizes replicas over HTTP, evaluates write quorum ($W=2$), and returns a response to the client—rolling back if quorum fails."
+> When a write request `PUT("user:123", "Tejas")` arrives, any node can act as the **Coordinator**. It computes the hash, routes the key to the responsible owner node, writes to disk-backed WAL first, mutates memory, synchronizes replicas over HTTP, evaluates write quorum (W=2), and returns a response to the client—rolling back if quorum fails."
 
 ---
 
@@ -70,13 +70,13 @@ Before diving into the execution flow, here is the architecture of each node in 
 ### Step 1: Ingress & Network Gateway (`Router.cpp`)
 1. **Request Reception:** A client issues an HTTP POST request to `/put` with payload `key="user:123"&value="Tejas"` to any arbitrary node in the cluster (Node A).
 2. **CORS & Preflight Handling:** The router pre-routing handler evaluates OPTIONS preflight requests, adding headers `Access-Control-Allow-Origin: *` and `X-Pinggy-No-Screen: true` to prevent browser blockages.
-3. **Consensus Config Read:** The server acquires a shared lock (`std::shared_lock<std::shared_mutex>`) on global configuration settings to retrieve the active parameters: $N=3$ (Replication Factor) and $W=2$ (Write Quorum requirement).
+3. **Consensus Config Read:** The server acquires a shared lock (`std::shared_lock<std::shared_mutex>`) on global configuration settings to retrieve the active parameters: N=3 (Replication Factor) and W=2 (Write Quorum requirement).
 
 ---
 
 ### Step 2: Hashing & Topology Lookup (`ConsistentHash.cpp`)
 1. **Hash Calculation:** The server passes the key `"user:123"` into the **64-bit FNV-1a Hashing Algorithm**:
-   $$\text{hash} = \text{FNV\_offset\_basis} \bigoplus \text{char} \times \text{FNV\_prime}$$
+   `hash = FNV_offset_basis XOR char * FNV_prime`
 2. **vNode Ring Lookup:** The ring maintains 100 virtual nodes per physical machine stored in a binary search tree (`std::map<size_t, std::string>`).
 3. **Clockwise Routing:** The engine invokes `std::map::upper_bound(hash)`. It traverses clockwise to find the first vNode whose token exceeds the key's hash.
 4. **Proxy Decision:**
@@ -101,13 +101,13 @@ Before modifying RAM, the coordinator guarantees crash resilience:
    * Erases the key from `lruMap` and main `dataStore` (`std::unordered_map`).
 3. **Insertion & LRU Re-ordering:**
    * Stores `{value: "Tejas", expiry_time: 0}` in `dataStore`.
-   * Promotes `"user:123"` to the front of `lruQueue` and updates `lruMap` iterator pointer in $O(1)$ time.
+   * Promotes `"user:123"` to the front of `lruQueue` and updates `lruMap` iterator pointer in O(1) time.
 4. **Local ACK:** Coordinator sets its internal acknowledgment counter `acks = 1`.
 
 ---
 
 ### Step 5: Synchronous Replication & Peer Quorum (`Replicator.cpp`)
-1. **Target Selection:** The coordinator retrieves unique physical nodes from the ring, filtering out itself, and targets $N-1$ replica nodes.
+1. **Target Selection:** The coordinator retrieves unique physical nodes from the ring, filtering out itself, and targets N-1 replica nodes.
 2. **Synchronous Forwarding:** Sends HTTP POST `/internal/replicate` calls with a strict 2-second connection/read timeout (`cli.set_read_timeout(2, 0)`).
 3. **Replica Node Processing:** Each receiving replica node:
    * Appends `"PUT,user:123,Tejas"` to its local WAL disk file.
@@ -119,11 +119,11 @@ Before modifying RAM, the coordinator guarantees crash resilience:
 
 ### Step 6: Quorum Verification & Rollback Handling (`Router.cpp`)
 1. **Quorum Evaluation:** Checks if total ACKs satisfy the effective Write Quorum:
-   $$\text{acks} \ge \text{effective\_W} \quad \text{where } \text{effective\_W} = \min(W, \text{activeNodes})$$
-2. **Scenario A — SUCCESS ($\text{acks} \ge 2$):**
+   `acks >= effective_W` where `effective_W = min(W, activeNodes)`
+2. **Scenario A — SUCCESS (acks >= 2):**
    * Coordinator responds with HTTP `200 OK` and JSON `{"status": "success"}`.
    * Client receives confirmation that the write is durable and replicated.
-3. **Scenario B — FAILURE / ROLLBACK ($\text{acks} < 2$):**
+3. **Scenario B — FAILURE / ROLLBACK (acks < 2):**
    * If network partition or peer crash prevents reaching quorum:
    * **Memory Rollback:** Calls `storage->remove("user:123")` to clear the uncommitted key.
    * **WAL Tombstone:** Writes `"DELETE,user:123,"` tombstone to WAL to maintain disk consistency.
@@ -145,7 +145,7 @@ Before modifying RAM, the coordinator guarantees crash resilience:
 | **Consistent Hashing** | [ConsistentHash.cpp](file:///home/devian/Projects/distributed-system/src/core/ConsistentHash.cpp) | FNV-1a 64-bit Hash, 100 vNodes, `std::map` (BST), `std::shared_mutex` |
 | **Durability (WAL)** | [WAL.cpp](file:///home/devian/Projects/distributed-system/src/core/WAL.cpp) | Append-only file streams (`std::ofstream`), `logFile.flush()`, `std::mutex` |
 | **Storage Engine & LRU** | [StorageEngine.cpp](file:///home/devian/Projects/distributed-system/src/core/StorageEngine.cpp) | `std::unordered_map`, `std::list` (LRU), `std::shared_mutex` (RW Lock) |
-| **Replication & Quorum** | [Replicator.cpp](file:///home/devian/Projects/distributed-system/src/cluster/Replicator.cpp) | Synchronous HTTP calls, 2s Timeout, $W=2, R=2, N=3$ Quorum |
+| **Replication & Quorum** | [Replicator.cpp](file:///home/devian/Projects/distributed-system/src/cluster/Replicator.cpp) | Synchronous HTTP calls, 2s Timeout, W=2, R=2, N=3 Quorum |
 | **Failure Detection** | [Gossip.cpp](file:///home/devian/Projects/distributed-system/src/cluster/Gossip.cpp) | OS-level Background Thread (`std::thread`), 2s `/ping` Heartbeats |
 
 ---
@@ -182,7 +182,7 @@ Before modifying RAM, the coordinator guarantees crash resilience:
 * **Client A** sends `PUT("user:123", "Tejas")` to **Node 1**.
 * **Client B** sends `PUT("user:123", "Raj")` to **Node 2**.
 * **Hash Calculation:** Both Node 1 and Node 2 independently execute:
-  $$\text{hash} = \text{ConsistentHash::computeHash}("user:123")$$
+  `hash = ConsistentHash::computeHash("user:123")`
 * **Ring Lookup:** Both nodes call `hashRing->getOwnerNode("user:123")`. Because 64-bit FNV-1a hashing on a static ring topology is 100% deterministic, both nodes find the exact same primary owner node—let's call it **Node 3**.
 * **Request Proxying:**
   * Node 1 detects `ownerNode (Node 3) != myAddress (Node 1)`. It proxies Client A's request to Node 3 via HTTP `Post("/put")`.
