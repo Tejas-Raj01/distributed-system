@@ -262,3 +262,97 @@ If an interviewer asks: *"What if network delays cause replica nodes to receive 
 > 3. If `incoming_timestamp < existing_timestamp`, drop the stale replica write.
 > 
 > This would enforce LWW determinism even under asynchronous network reordering."*
+
+---
+---
+
+## ❓ Question 3: Consistency Model, Read Path & Quorum Realities (N=3, W=2, R=2)
+
+**"Tejas, I want to understand your consistency model better.**
+
+**You said your replication configuration is N=3, W=2, R=2. But you also just told me that every GET request is routed to the owner node.**
+
+**So where exactly is the R=2 read quorum used?**
+
+**Walk me through `GET("user:123")` step by step.**
+
+**Specifically explain:**
+1. **Does the owner query two replicas?**
+2. **Or does it only read from its local memory?**
+3. **If it queries two replicas, how does it resolve different values?**
+4. **If it only reads locally, in what sense is R=2 implemented?**
+5. **What happens if the owner node is down?**
+
+**Answer based strictly on your actual implementation."**
+
+---
+
+## 🎙️ Candidate Executive Summary (30-Second Elevator Pitch)
+
+> "In our actual C++ implementation of Tejas-DB, every `GET("user:123")` request is routed to the key's primary Owner Node via Consistent Hashing. Once the request hits the owner node, **the owner node reads directly from its local in-memory storage engine rather than making network calls to query two replicas.**
+>
+> In our current codebase, `R=2` is implemented as a **configurable consistency tier parameter** that models read latency semantics (`std::this_thread::sleep_for(current_R * 12)` ms). Local reading works safely because writes require synchronous quorum ($W=2$), guaranteeing that the owner node holds the latest committed state ($W + R > N \implies 2 + 2 > 3$).
+>
+> If the primary owner node crashes, our **Gossip Failure Detector** detects the failure, evicts the dead node from the Consistent Hash ring, and promotes the next clockwise replica node in the ring—which already received the $W=2$ synchronous write—to serve reads."
+
+---
+
+## 🔄 Step-by-Step Execution Lifecycle of `GET("user:123")`
+
+When a client issues an HTTP `GET /get?key=user:123`:
+
+1. **Ingress & Parameter Extraction (`Router.cpp`):**
+   * The node receiving the request extracts `key = "user:123"`.
+   * It acquires a shared lock on `global_config` to read the active read quorum setting `current_R`.
+2. **Configured Latency Simulation:**
+   * If `current_R == 1`, it executes `sleep_for(2ms)`.
+   * If `current_R > 1` (e.g., `R=2`), it executes `sleep_for(current_R * 12ms)` (24ms) to simulate quorum evaluation overhead.
+3. **Consistent Hash Routing (`ConsistentHash.cpp`):**
+   * Evaluates `hashRing->getOwnerNode("user:123")`.
+4. **Local Read vs Proxy Branching:**
+   * **If Receiving Node IS the Owner Node:** Calls `storage->get("user:123")` under `std::shared_lock<std::shared_mutex>` and returns HTTP `200 OK` with the value.
+   * **If Receiving Node IS NOT the Owner Node:** Instantiates an HTTP client (`httplib::Client`) to proxy the GET request to `http://<ownerNode>/get?key=user:123`.
+
+---
+
+## 🎯 Direct Answers to the 5 Interview Sub-Questions
+
+### 1. Does the owner query two replicas?
+**No.** In [Router.cpp](file:///home/devian/Projects/distributed-system/src/network/Router.cpp#L237-L245), when `ownerNode == myAddress`, the server executes:
+```cpp
+auto result = storage->get(key);
+```
+It does not initiate outbound HTTP or RPC calls to fan out reads to $R-1$ replica nodes.
+
+### 2. Or does it only read from its local memory?
+**Yes.** The owner node acquires a shared Reader Lock (`std::shared_lock<std::shared_mutex>`) on its local `StorageEngine` in-memory `std::unordered_map` and returns the local value directly.
+
+### 3. If it queries two replicas, how does it resolve different values?
+Because the owner node reads locally, **it does not perform dynamic multi-node read resolution (Read Repair) on the read path.** State resolution occurs on the **write path**: writes are synchronously replicated to $W=2$ nodes, and single-owner mutex lock serialization ensures all replicas receive writes in identical order.
+
+### 4. If it only reads locally, in what sense is R=2 implemented?
+In our codebase:
+* **Latency Simulation:** `R` acts as a configurable parameter (`global_config.R`) that dynamically throttles read response latency (`sleep_for(current_R * 12)` ms) to simulate strict quorum consensus network delays.
+* **Theoretical Guarantee:** Because writes enforce $W=2$ across $N=3$ nodes, the owner node is guaranteed to be part of every successful write quorum. Therefore, local reads from the owner node implicitly satisfy strong consistency ($W + R > N$) without the performance penalty of $R$ parallel network reads.
+
+### 5. What happens if the owner node is down?
+* **Immediate Proxy Failure:** If a non-owner receives a `GET` request and the owner node is unreachable, the proxy HTTP request fails and returns HTTP `503 Service Unavailable` ("Owner node is unreachable").
+* **Gossip Eviction & Ring Failover:** Within 6 seconds (3 failed heartbeats at 2s intervals), the `Gossip` thread marks the owner node as DEAD and evicts it from the ring.
+* **Replica Promotion:** The next node clockwise on the vNode ring becomes the new primary owner. Because $W=2$ writes were synchronously replicated to this replica, the new owner immediately serves the latest value from its local memory/WAL without data loss.
+
+---
+
+## 🛠️ Honest Engineering Analysis & Production Enhancement Path
+
+If the interviewer pushes: *"So R=2 isn't a true multi-node RPC read quorum in code yet?"*
+
+> **Candidate Response:**  
+> *"Spot on! That is an accurate distinction between our v1 implementation and a full Dynamo specification.
+> 
+> In v1, we optimized the read path by routing reads to the single owner node, which avoids fan-out network latency while relying on $W=2$ synchronous writes for consistency.
+> 
+> To upgrade this to **True Fan-Out Quorum Reads (R=2 Read Repair)**:
+> 1. In `Router::handleGet()`, the coordinator node sends parallel HTTP GET calls to $R$ top nodes on the ring.
+> 2. Attach a monotonic timestamp or vector version to each record.
+> 3. Compare returned values: if replicas return conflicting versions, return the latest timestamp to the client and asynchronously send a `/internal/put` write to update the stale replica (**Read Repair**)."*
+
