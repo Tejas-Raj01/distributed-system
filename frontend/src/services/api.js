@@ -21,7 +21,7 @@ export const apiService = {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'ngrok-skip-browser-warning': 'true'
+        'X-Pinggy-No-Screen': 'true'
       },
       body: `key=${encodeURIComponent(key)}&value=${encodeURIComponent(value)}&ttl=${ttl}`
     });
@@ -36,7 +36,7 @@ export const apiService = {
   // 2. GET Data
   getData: async (key) => {
     const response = await fetch(getUrl(`/get?key=${encodeURIComponent(key)}`), {
-      headers: { 'ngrok-skip-browser-warning': 'true' }
+      headers: { 'X-Pinggy-No-Screen': 'true' }
     });
     if (!response.ok) {
       throw new Error('Read Quorum Failed or Key missing');
@@ -48,7 +48,7 @@ export const apiService = {
   deleteData: async (key) => {
     const response = await fetch(getUrl(`/delete?key=${encodeURIComponent(key)}`), {
       method: 'DELETE',
-      headers: { 'ngrok-skip-browser-warning': 'true' }
+      headers: { 'X-Pinggy-No-Screen': 'true' }
     });
     if (!response.ok) {
       throw new Error('Delete Quorum Failed');
@@ -59,7 +59,7 @@ export const apiService = {
   // 4. Fetch Live Cluster State
   fetchClusterState: async () => {
     const response = await fetch(getUrl('/admin/status'), {
-      headers: { 'ngrok-skip-browser-warning': 'true' }
+      headers: { 'X-Pinggy-No-Screen': 'true' }
     });
     if (!response.ok) {
       throw new Error('Cluster state sync failed');
@@ -73,7 +73,7 @@ export const apiService = {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'ngrok-skip-browser-warning': 'true' 
+        'X-Pinggy-No-Screen': 'true' 
       },
       body: `port=${port}`
     });
@@ -89,7 +89,7 @@ export const apiService = {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'ngrok-skip-browser-warning': 'true' 
+        'X-Pinggy-No-Screen': 'true' 
       },
       body: `port=${port}`
     });
@@ -105,7 +105,7 @@ export const apiService = {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true'
+        'X-Pinggy-No-Screen': 'true'
       },
       body: JSON.stringify(config)
     });
@@ -118,7 +118,7 @@ export const apiService = {
   // 8. Rebalance Cluster
   rebalanceCluster: async () => {
     const response = await fetch(getUrl('/admin/rebalance'), {
-      headers: { 'ngrok-skip-browser-warning': 'true' }
+      headers: { 'X-Pinggy-No-Screen': 'true' }
     });
     if (!response.ok) {
       throw new Error('Cluster rebalance failed');
@@ -130,7 +130,7 @@ export const apiService = {
   clearAllData: async () => {
     const response = await fetch(getUrl('/admin/clear'), {
       method: 'POST',
-      headers: { 'ngrok-skip-browser-warning': 'true' }
+      headers: { 'X-Pinggy-No-Screen': 'true' }
     });
     if (!response.ok) {
       throw new Error('Cluster clear failed');
