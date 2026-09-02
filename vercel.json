@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://pumwt-117-250-64-131.free.pinggy.net/:path*"
+      "destination": "https://idgiy-2409-40e1-b-a173-d051-7fac-3c21-8524.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
