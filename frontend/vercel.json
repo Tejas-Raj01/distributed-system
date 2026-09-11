@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://ejngh-117-250-64-131.free.pinggy.net/:path*"
+      "destination": "https://fopdd-117-250-64-131.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
