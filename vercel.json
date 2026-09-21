@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://zpply-117-250-64-129.free.pinggy.net/:path*"
+      "destination": "https://bhxpy-117-250-64-129.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
