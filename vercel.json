@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://vajqf-117-250-64-129.free.pinggy.net/:path*"
+      "destination": "https://tmsct-117-250-64-129.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
