@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://fflad-152-58-139-98.free.pinggy.net/:path*"
+      "destination": "https://vtrem-117-250-64-131.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
