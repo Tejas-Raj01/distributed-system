@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://isbyo-117-250-64-131.free.pinggy.net/:path*"
+      "destination": "https://wpink-2a02-6ea0-5601-6307--11.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
