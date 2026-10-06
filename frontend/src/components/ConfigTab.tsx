@@ -7,12 +7,12 @@ const ConfigTab = () => {
   const { addLog, isBackendOffline } = useStore();
 
   const handleUpdateConfig = async () => {
-    addLog(`[CONFIG] Sending new Quorum rules to C++: N=${config.N}, W=${config.W}, R=${config.R}`);
+    addLog(`[CONFIG] Sending new Quorum rules to Rust: N=${config.N}, W=${config.W}, R=${config.R}`);
     try {
       await apiService.updateConfig(config);
-      addLog("[CONFIG] Success: C++ Memory Updated!");
+      addLog("[CONFIG] Success: Rust Memory Updated!");
     } catch (err) {
-      addLog("[CRITICAL] Failed to sync config with C++.");
+      addLog("[CRITICAL] Failed to sync config with Rust.");
     }
   };
 

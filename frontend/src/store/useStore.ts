@@ -22,7 +22,7 @@ const useStore = create((set, get) => ({
   // 🛡️ NAYA: EDGE CASES & ERROR HANDLING STATES
   // ==========================================
   isInjecting: false,         // Stress test ke time UI lock karne ke liye
-  isBackendOffline: false,    // C++ server crash hone par Red Banner ke liye
+  isBackendOffline: false,    // Rust server crash hone par Red Banner ke liye
 
   // --- ACTIONS (State Mutators) ---
 

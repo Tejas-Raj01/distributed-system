@@ -57,10 +57,10 @@ const ControlCenter = () => {
 
   const handleUpdateConfig = async () => {
     if (isInjecting || isBackendOffline) return;
-    addLog(`[CONFIG] Syncing Rules with C++: N=${config.N}, W=${config.W}, R=${config.R}`);
+    addLog(`[CONFIG] Syncing Rules with Rust: N=${config.N}, W=${config.W}, R=${config.R}`);
     try {
       await apiService.updateConfig(config);
-      addLog("[CONFIG] Success: C++ Memory Updated!");
+      addLog("[CONFIG] Success: Rust Memory Updated!");
     } catch (err) {
       addLog("[CRITICAL] Config sync failed. Backend unreachable.");
     }
@@ -194,7 +194,7 @@ const ControlCenter = () => {
       
       {isBackendOffline && (
         <div className="bg-red-950/80 border border-red-500 text-red-400 p-3 rounded text-xs font-bold text-center animate-pulse mt-4 shadow-[0_0_15px_rgba(239,68,68,0.2)]">
-          ⚠️ Backend Offline - Restart C++ Server
+          ⚠️ Backend Offline - Restart Rust Server
         </div>
       )}
 
@@ -214,7 +214,7 @@ const ControlCenter = () => {
             </div>
           ))}
         </div>
-        <button disabled={isInjecting || isBackendOffline} onClick={handleUpdateConfig} className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition">APPLY CONFIG TO C++</button>
+        <button disabled={isInjecting || isBackendOffline} onClick={handleUpdateConfig} className="w-full mt-3 bg-amber-600/20 text-amber-400 p-2 rounded text-[10px] font-bold border border-amber-500/50 hover:bg-amber-600/40 disabled:cursor-not-allowed transition">APPLY CONFIG TO RUST</button>
       </div>
 
       <div className={`flex flex-col gap-4 mt-6 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>

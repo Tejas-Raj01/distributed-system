@@ -71,7 +71,7 @@ const HashRing = () => {
         }
         
         const animDot = animatedDotsRef.current[item.key];
-        const targetAngle = item.angle; // C++ Backend se aaya asli Target Angle
+        const targetAngle = item.angle; // Rust Backend se aaya asli Target Angle
 
         // 🧠 LERP Math: Purane angle se naye angle tak smooth sliding!
         if (Math.abs(targetAngle - animDot.currentAngle) > 0.1) {

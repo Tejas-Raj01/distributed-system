@@ -4,7 +4,7 @@ const isProd = import.meta.env.PROD;
 
 // 🚀 THE PERMANENT FIX:
 // In production on Vercel, requests use Vercel's Native Edge Proxy (/api/backend).
-// In local development, requests hit the local C++ server directly (http://localhost:8080).
+// In local development, requests hit the local Rust server directly (http://localhost:8080).
 // Automatically ignore stale ngrok/tunnel env overrides in production.
 const envBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const BASE_URL = (isProd && (!envBaseUrl || envBaseUrl.includes('ngrok') || envBaseUrl.includes('lhr.life')))
