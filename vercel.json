@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://ezciz-117-250-64-131.free.pinggy.net/:path*"
+      "destination": "https://aauby-2409-40e1-47a-2e9b-7d11-915a-d1c3-3075.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
