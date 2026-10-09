@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://ntlsi-117-250-71-123.free.pinggy.net/:path*"
+      "destination": "https://pbxvc-117-250-64-131.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
