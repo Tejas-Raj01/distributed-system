@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/backend/:path*",
-      "destination": "https://rljxg-117-250-64-131.free.pinggy.net/:path*"
+      "destination": "https://znpml-2405-201-4043-404f-7eb1-8161-438b-9a81.free.pinggy.net/:path*"
     },
     {
       "source": "/((?!api/backend/).*)",
