@@ -2,7 +2,7 @@
 
 const isProd = import.meta.env.PROD;
 
-// 🚀 THE PERMANENT FIX:
+// Base URL configuration:
 // In production on Vercel, requests use Vercel's Native Edge Proxy (/api/backend).
 // In local development, requests hit the local Rust server directly (http://localhost:8080).
 // Automatically ignore stale ngrok/tunnel env overrides in production.

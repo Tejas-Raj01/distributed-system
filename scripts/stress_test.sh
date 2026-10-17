@@ -13,15 +13,14 @@ echo -e "${GREEN}==========================================${NC}"
 if ! command -v ab &> /dev/null
 then
     echo "Error: Apache Bench (ab) tool is not installed."
-    echo "NixOS pe install karne ke liye run karein: nix-shell -p apacheHttpd"
+    echo "To install on NixOS, run: nix-shell -p apacheHttpd"
     exit 1
 fi
 
 # Variables
 TOTAL_REQUESTS=10000
 CONCURRENCY=100
-# Hum '/internal/put' use kar rahe hain taaki pure raw speed (Storage + RAM) test ho sake
-# bina Quorum/Replica network latency ke.
+# Using '/internal/put' to test raw storage engine throughput without quorum network latency
 URL="http://127.0.0.1:8080/internal/put" 
 PAYLOAD_FILE="scripts/post_data.txt"
 CONTENT_TYPE="application/x-www-form-urlencoded"

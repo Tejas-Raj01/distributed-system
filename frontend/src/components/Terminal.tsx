@@ -8,7 +8,7 @@ const Terminal = () => {
   // ==========================================
   // 1. AUTO-SCROLL LOGIC
   // ==========================================
-  // Jaise hi terminalLogs array update hoga, yeh automatically neeche scroll kar dega
+  // Automatically scroll to bottom when terminalLogs updates
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [terminalLogs]);

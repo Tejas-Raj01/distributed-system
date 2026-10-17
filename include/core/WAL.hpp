@@ -3,25 +3,22 @@
 #include <fstream>
 #include <mutex>
 
-// Forward declaration taaki compiler ko pata ho ki yeh class exist karti hai
+// Forward declaration for StorageEngine
 class StorageEngine; 
 
 class WAL {
 private:
     std::string filepath;
     std::ofstream logFile;
-    std::mutex file_lock; // Disk writes ko thread-safe banane ke liye
+    std::mutex file_lock; // Mutex protecting disk writes
 
 public:
-    // Constructor jahan file ka naam set hoga aur file open hogi
     WAL(const std::string& path);
-    
-    // Destructor mein file close karna zaruri hai
     ~WAL();
 
-    // Log likhne ka function
+    // Appends an entry to the write-ahead log
     void appendLog(const std::string& action, const std::string& key, const std::string& value = "");
 
-    // Server start hone par purana data RAM mein wapas laane ka function
+    // Recovers storage engine state by replaying the log on startup
     void recover(StorageEngine& engine);
 };

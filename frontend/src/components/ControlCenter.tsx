@@ -12,7 +12,7 @@ const ControlCenter = () => {
   const [config, setConfig] = useState({ N: 3, W: 2, R: 2 });
   const [spawnCount, setSpawnCount] = useState(1);
   
-  // 🚀 NAYA JADOO: Side panel ke liye saare nodes ki history track karega
+  // Track history of all discovered nodes for the side panel
   const [knownNodes, setKnownNodes] = useState(new Set([8080])); 
   const maxNodes = 10;
 
@@ -26,13 +26,13 @@ const ControlCenter = () => {
       try {
         const data = await apiService.fetchClusterState();
         
-        // 1. Hash Ring ke liye sirf zinda nodes update karo
+        // 1. Update active nodes for hash ring
         useStore.setState({
           clusterState: data.nodes || [],
           dataRing: data.dataMap || []
         });
 
-        // 2. Side Panel ke liye history mein naye nodes add karo (kabhi delete nahi honge)
+        // 2. Add newly discovered nodes to persistent history for side panel
         if (data.nodes) {
           setKnownNodes(prev => {
             const newSet = new Set(prev);
@@ -137,7 +137,7 @@ const ControlCenter = () => {
 
   const handleClearAll = async () => {
     if (isInjecting || isBackendOffline) return;
-    if (!window.confirm("Kya aap sach me saara data delete karna chahte hain?")) return;
+    if (!window.confirm("Are you sure you want to delete all cluster data?")) return;
     try {
       await apiService.clearAllData();
       addLog("[🧹 SYSTEM] Cluster memory wiped clean successfully!");
@@ -155,7 +155,7 @@ const ControlCenter = () => {
     } catch (err) { addLog("[CRITICAL] Rebalance failed."); }
   };
 
-  // 🚀 THE FIX: KILL AUR REVIVE LOGIC
+  // Node kill and revive handlers
   const handleToggleStatus = async (nodeId, isAlive) => {
     if (nodeId === 8080) {
       addLog("[WARNING] 👑 Master Node (8080) cannot be killed from UI!");
@@ -245,12 +245,12 @@ const ControlCenter = () => {
         </button>
       </div>
 
-      {/* 🚀 THE FIX: DYNAMIC STATUS RENDERING */}
+      {/* Dynamic cluster node status list */}
       <div className={`flex flex-col gap-3 mt-8 pb-4 transition-opacity duration-300 ${isInjecting || isBackendOffline ? 'opacity-40' : ''}`}>
         <h2 className="text-red-400 text-[10px] font-bold tracking-[0.2em] uppercase border-b border-red-900/50 pb-2">Cluster Status</h2>
         
         {Array.from(knownNodes).sort((a, b) => a - b).map((nodeId, index) => {
-          // Check karo kya node abhi zinda list mein hai?
+          // Check if node is in the active list
           const aliveNode = clusterState.find(n => n.id === nodeId);
           const isAlive = !!aliveNode;
           const nodeColor = isAlive ? (aliveNode.color || "#06b6d4") : "#334155"; // Grey for dead
@@ -264,7 +264,7 @@ const ControlCenter = () => {
                 <span className={`font-mono ${isAlive ? "text-white" : "text-slate-500 line-through"}`}>Node {index + 1} ({nodeId})</span>
               </div>
               
-              {/* Master Node (8080) ko UI se maarne nahi denge */}
+              {/* Prevent terminating master node (8080) from UI */}
               {nodeId !== 8080 ? (
                 <button disabled={isInjecting || isBackendOffline} onClick={() => handleToggleStatus(nodeId, isAlive)} className={`text-[10px] font-bold px-3 py-1 rounded border relative z-10 disabled:cursor-not-allowed ${isAlive ? 'border-red-500/50 text-red-400 enabled:hover:bg-red-900/30' : 'border-green-500/50 text-green-400 enabled:hover:bg-green-900/30'}`}>
                   {isAlive ? "☠️ KILL" : "➕ REVIVE"}

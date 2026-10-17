@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 find_package(Threads REQUIRED)
 
-# Compiler ko batayein ki saari Header (.hpp) files kahan rakhi hain
-# Taaki aapko .cpp files mein "#include <core/StorageEngine.hpp>" na likhna pade
+# Include directories for headers
 include_directories(
     include 
     include/core 
@@ -16,7 +15,7 @@ include_directories(
     external
 )
 
-# Saari Source (.cpp) files ka sahi rasta (path)
+# Source files
 set(SOURCES
     src/main.cpp
     src/core/StorageEngine.cpp
@@ -27,8 +26,8 @@ set(SOURCES
     src/network/Router.cpp
 )
 
-# Executable (Program) banayein
+# Executable target
 add_executable(kv_server ${SOURCES})
 
-# Threads library link karein
+# Link threading library
 target_link_libraries(kv_server PRIVATE Threads::Threads)

@@ -10,23 +10,23 @@ Gossip::Gossip(const std::string& myAddress, ConsistentHash* ring)
     : myAddress(myAddress), hashRing(ring), isRunning(false) {}
 
 Gossip::~Gossip() {
-    stop(); // Program close hone par thread safely join ho jaye
+    stop();
 }
 
 void Gossip::start(const std::vector<std::string>& seedNodes) {
     if (isRunning) return; 
     isRunning = true;
 
-    // 1. THE DISCOVERY: Boot hote hi seed nodes ko Hello bolna
+    // 1. Discovery: Connect to seed nodes on startup
     for (const auto& seed : seedNodes) {
         if (seed != myAddress) {
-            addPeer(seed); // Pehle apni peer list mein dalo
+            addPeer(seed);
             std::cout << "[GOSSIP] Connecting to cluster via seed node: " << seed << "...\n";
             sendDiscoveryPing(seed);
         }
     }
 
-    // 2. THE HEARTBEAT: Naya background thread launch karna
+    // 2. Heartbeat: Start background monitoring thread
     heartbeatThread = std::thread(&Gossip::runHeartbeat, this);
     std::cout << "[Gossip] Heartbeat thread started." << std::endl;
 }
@@ -45,11 +45,11 @@ void Gossip::addPeer(const std::string& peerAddress) {
     std::lock_guard<std::mutex> lock(peers_lock);
     if (std::find(peers.begin(), peers.end(), peerAddress) == peers.end()) {
         peers.push_back(peerAddress);
-        failureCount[peerAddress] = 0; // Naye server ka fail count 0 set kiya
+        failureCount[peerAddress] = 0;
     }
 }
 
-// 📡 GOSSIP PING: Doosre nodes ko batana "Main Zinda Hoon"
+// Announces node presence to peer
 void Gossip::sendDiscoveryPing(const std::string& targetNode) {
     size_t colonPos = targetNode.find(':');
     if (colonPos == std::string::npos) return;
@@ -71,7 +71,7 @@ void Gossip::sendDiscoveryPing(const std::string& targetNode) {
     }
 }
 
-// 🎯 TRIGGER: Jab kisi doosre node ka ping is node par aata hai
+// Handles incoming gossip announcement from a peer node
 void Gossip::receiveGossip(const std::string& newNode) {
     bool isNew = false;
     {
@@ -84,16 +84,16 @@ void Gossip::receiveGossip(const std::string& newNode) {
     if (isNew) {
         std::cout << "\n[GOSSIP] 🚨 ALERT: New Node Joined the Cluster -> " << newNode << "!\n";
         
-        // 1. Apni memory mein add karo
+        // 1. Add to peer list
         addPeer(newNode);
         
-        // 2. Hash Ring mein naye node ko baithao
+        // 2. Add to consistent hash ring
         if (hashRing != nullptr) {
             hashRing->addNode(newNode);
             std::cout << "[HASH RING] Node " << newNode << " added to Consistent Hash Ring.\n";
         }
         
-        // 3. ⚖️ THE MASTERPIECE: Trigger Rebalance!
+        // 3. Trigger data rebalance
         std::cout << "[REBALANCE] Cluster shape changed. Triggering background initiateRebalance()...\n";
     }
 }
@@ -140,7 +140,7 @@ void Gossip::runHeartbeat() {
                     peers.erase(std::remove(peers.begin(), peers.end(), peer), peers.end());
                     failureCount.erase(peer);
 
-                    // ⚖️ FAILOVER REBALANCE: Jab node marta hai, tab bhi data redistribute hoga!
+                    // Trigger failover rebalance when node is evicted
                     std::cout << "[REBALANCE] Node dead. Triggering Failover initiateRebalance()...\n";
                 }
             }

@@ -4,26 +4,26 @@ import useStore from '../store/useStore';
 const HashRing = () => {
   const canvasRef = useRef(null);
   
-  // NAYA: Animation loop ko track karne aur cancel karne ke liye
+  // Animation frame reference for cleanup
   const animationRef = useRef(null);
   
-  // NAYA: Har dot ki live position track karne ke liye (Taaki React re-render se data ude nahi)
+  // Persistent tracking of live dot positions across renders
   const animatedDotsRef = useRef({}); 
 
   const { clusterState, dataRing } = useStore();
 
-  // Malik (Owner Node) dhoondhne ka logic (For coloring the dots)
+  // Determines owner node on the ring to color data dots
   const getOwnerNode = (keyAngle) => {
   const activeNodes = clusterState.filter(n => n.status === "alive");
   if (activeNodes.length === 0) return { color: "#64748b", id: "Offline", displayId: "Offline" }; 
   
-  // Ring ke hisaab se nodes ko angle par sort kiya
+  // Sort active nodes by angular position on ring
   let sortedNodes = [...activeNodes].sort((a, b) => a.angle - b.angle);
   
-  // 🚀 THE FIX: Asli sequential number nikalne ke liye nodes ko unke asli ID se sort kiya
+  // Sort by ID for deterministic display index
   const allSortedById = [...clusterState].sort((a, b) => a.id - b.id);
   
-  let targetNode = sortedNodes[0]; // Default fallback agar circle cross ho jaye
+  let targetNode = sortedNodes[0]; // Wrap-around fallback
   
   for (let node of sortedNodes) {
     if (node.angle >= keyAngle) {
@@ -32,14 +32,13 @@ const HashRing = () => {
     }
   }
   
-  // Target node ka asli number pata lagana (e.g., 8080 -> Index 0 -> Node 1)
+  // 1-based display index (e.g., 8080 -> Node 1)
   const nodeIndex = allSortedById.findIndex(n => n.id === targetNode.id) + 1;
   
-  // Node return karte waqt usme ek safe 'displayId' daal diya
   return { ...targetNode, displayId: `Node ${nodeIndex}` }; 
 };
 
-  // 🖌️ THE CANVAS LERP RENDERING ENGINE (Pillar 4 Animation)
+  // Canvas LERP Rendering Engine
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -50,62 +49,61 @@ const HashRing = () => {
     const height = canvas.height;
     const centerX = width / 2;
     const centerY = height / 2;
-    const radius = 170; // Circle ki radius
+    const radius = 170; // Ring radius
 
     const animate = () => {
-      // 1. Clear the canvas (Pichla frame saaf karo)
+      // 1. Clear the canvas
       ctx.clearRect(0, 0, width, height);
 
-      // 2. Draw the Base Ring (Border)
+      // 2. Draw base ring border
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
       ctx.strokeStyle = '#334155'; // slate-700
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // 3. Draw 1000+ Data Dots (WITH FLYING ANIMATION LERP)
+      // 3. Draw data dots with LERP animation
       dataRing.forEach(item => {
-        // Agar dot pehli baar aaya hai, toh current position set karo
+        // Initialize position on first appearance
         if (!animatedDotsRef.current[item.key]) {
           animatedDotsRef.current[item.key] = { currentAngle: item.angle };
         }
         
         const animDot = animatedDotsRef.current[item.key];
-        const targetAngle = item.angle; // Rust Backend se aaya asli Target Angle
+        const targetAngle = item.angle;
 
-        // 🧠 LERP Math: Purane angle se naye angle tak smooth sliding!
+        // LERP for smooth interpolation towards target angle
         if (Math.abs(targetAngle - animDot.currentAngle) > 0.1) {
-          // Speed: 0.08. Isko badhayenge toh dots tez udenge
           animDot.currentAngle += (targetAngle - animDot.currentAngle) * 0.08; 
         } else {
-          animDot.currentAngle = targetAngle; // Target par pahunch gaya
+          animDot.currentAngle = targetAngle;
         }
 
-        // Color hamesha target owner ka hoga (Taaki udte waqt color change dikhe)
+        // Color dots according to target owner node
         const owner = getOwnerNode(targetAngle);
         
-        // Convert LIVE animated degrees to Radians
+        // Convert animated degrees to radians
         const rad = animDot.currentAngle * (Math.PI / 180);
         
-        // Trigonometry se (X, Y) coordinates nikalna
+        // Compute Cartesian coordinates
         const x = centerX + radius * Math.cos(rad);
         const y = centerY + radius * Math.sin(rad);
 
         ctx.beginPath();
-        ctx.arc(x, y, 3, 0, 2 * Math.PI); // 3px ki dot
+        ctx.arc(x, y, 3, 0, 2 * Math.PI);
         ctx.fillStyle = owner.color;
         
-        // Glowing Effect
+        // Glow effect
         ctx.shadowBlur = 8;
         ctx.shadowColor = owner.color;
         
         ctx.fill();
         
-        // Reset shadow for next items
+        // Reset shadow for subsequent items
         ctx.shadowBlur = 0; 
       });
 
-      // 4. Draw Physical Server Nodes
+      // 4. Draw physical server nodes
       clusterState.forEach(node => {
         const rad = node.angle * (Math.PI / 180);
         const x = centerX + radius * Math.cos(rad);
@@ -113,8 +111,8 @@ const HashRing = () => {
 
         // Node Circle
         ctx.beginPath();
-        ctx.arc(x, y, 18, 0, 2 * Math.PI); // 18px bada circle
-        ctx.fillStyle = node.status === 'alive' ? node.color : '#334155'; // Dead hai toh gray
+        ctx.arc(x, y, 18, 0, 2 * Math.PI);
+        ctx.fillStyle = node.status === 'alive' ? node.color : '#334155';
         ctx.fill();
         
         // Node Border
@@ -130,11 +128,11 @@ const HashRing = () => {
         ctx.fillText(node.id || node.port, x, y);
       });
 
-      // Agla frame paint karne ke liye loop ko call karo (60 FPS)
+      // Request next animation frame (60 FPS)
       animationRef.current = requestAnimationFrame(animate);
     };
 
-    // Purana frame loop cancel karo aur naya start karo
+    // Cancel previous animation loop before starting new one
     if (animationRef.current) cancelAnimationFrame(animationRef.current);
     animate();
 
@@ -143,7 +141,7 @@ const HashRing = () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
 
-  }, [clusterState, dataRing]); // React state change hone par naya target set hoga
+  }, [clusterState, dataRing]);
 
   return (
     <div className="w-1/2 flex items-center justify-center border-r border-slate-800 relative bg-slate-950 overflow-hidden">

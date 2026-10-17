@@ -1,52 +1,49 @@
-// frontend/src/store/useStore.js
 import { create } from 'zustand';
 
 const useStore = create((set, get) => ({
-  // 1. clusterState: Zinda aur murda nodes
+  // 1. clusterState: Active and inactive nodes
   clusterState: [
     { id: 8080, angle: 0, color: "#06b6d4", status: "alive" },
     { id: 8082, angle: 120, color: "#d946ef", status: "alive" },
     { id: 8084, angle: 240, color: "#ef4444", status: "alive" }
   ],
 
-  // 2. dataRing: Saari injected keys
+  // 2. dataRing: Injected key mapping
   dataRing: [],
 
-  // 3. terminalLogs: Strings array with 100 limit
+  // 3. terminalLogs: Log message history (max 100 entries)
   terminalLogs: [
     "> [INFO] Global State (Zustand) Initialized...",
     "> [ROUTER] Ready for inputs..."
   ],
 
-  // ==========================================
-  // 🛡️ NAYA: EDGE CASES & ERROR HANDLING STATES
-  // ==========================================
-  isInjecting: false,         // Stress test ke time UI lock karne ke liye
-  isBackendOffline: false,    // Rust server crash hone par Red Banner ke liye
+  // Edge cases & error handling states
+  isInjecting: false,         // Locks UI during stress testing
+  isBackendOffline: false,    // Triggers offline indicator when backend is unreachable
 
   // --- ACTIONS (State Mutators) ---
 
-  // Log add karna (Max 100 lines RAM save karne ke liye)
+  // Adds a log entry (keeps up to 100 entries)
   addLog: (msg) => set((state) => {
     const newLogs = [...state.terminalLogs, `> ${msg}`];
     if (newLogs.length > 100) {
-      newLogs.shift(); // Purane logs nikal do agar 100 se zyada ho jayein
+      newLogs.shift(); // Evict oldest log when capacity is exceeded
     }
     return { terminalLogs: newLogs };
   }),
 
-  // Naya data dot add karna
+  // Adds or updates a data point on the hash ring
   addData: (keyName, angle) => set((state) => {
     const filtered = state.dataRing.filter(k => k.key !== keyName);
     return { dataRing: [...filtered, { key: keyName, angle }] };
   }),
 
-  // Data dot delete karna
+  // Removes a data point from the hash ring
   removeData: (keyName) => set((state) => ({
     dataRing: state.dataRing.filter(k => k.key !== keyName)
   })),
 
-  // Node ko kill/revive karna
+  // Toggles node alive / dead status
   toggleNodeStatus: (targetId) => set((state) => {
     const updated = state.clusterState.map(n => {
       if (n.id === targetId) {
@@ -58,23 +55,20 @@ const useStore = create((set, get) => ({
     return { clusterState: updated };
   }),
 
-  // Naya node provision karna
+  // Adds a newly provisioned node to cluster state
   addNode: (newNode) => set((state) => {
     if (state.clusterState.find(n => n.id === newNode.id)) return state;
     return { clusterState: [...state.clusterState, newNode] };
   }),
 
-  // ==========================================
-  // 🛡️ NAYA: ERROR HANDLING SETTERS
-  // ==========================================
+  // Error handling setters
   setIsInjecting: (bool) => set({ isInjecting: bool }),
   setIsBackendOffline: (bool) => set({ isBackendOffline: bool }),
 
-  // useStore.js mein aayega
-    syncClusterState: (backendNodes, backendKeys) => set({
+  syncClusterState: (backendNodes, backendKeys) => set({
     clusterState: backendNodes,
     dataRing: backendKeys
-    }),
+  }),
 
 }));
 

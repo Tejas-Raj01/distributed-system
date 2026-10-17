@@ -27,7 +27,7 @@ Router::Router(const std::string& address, StorageEngine* se, ConsistentHash* ch
 void Router::setupRoutes() {
     
     // ==========================================
-    // 🛡️ 1. THE ULTIMATE CORS VIP PASS (PREFLIGHT)
+    // 1. CORS Preflight Handler
     // ==========================================
     server.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) -> httplib::Server::HandlerResponse {
         if (req.method == "OPTIONS") {
@@ -419,7 +419,7 @@ void Router::setupRoutes() {
     });
 
     // ==========================================
-    // 🧹 ADMIN API: Clear All Data (Reset Cluster)
+    // 16. ADMIN API: Clear All Data (Reset Cluster)
     // ==========================================
     server.Post("/admin/clear", [this](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -427,10 +427,10 @@ void Router::setupRoutes() {
 
         std::cout << "\n[ADMIN] 🧹 Clearing all cluster memory and log files...\n";
         
-        // 1. Local RAM khali karo
-        this->storage->clearAll(); // Ensure aapke StorageEngine mein clear() function ho
+        // 1. Clear in-memory storage
+        this->storage->clearAll();
 
-        // 2. WAL file ko khali karo (Truncate)
+        // 2. Remove WAL files on disk
         std::string cmd = "rm -f data/*";
         std::system(cmd.c_str());
 

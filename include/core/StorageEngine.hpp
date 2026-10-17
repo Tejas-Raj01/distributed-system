@@ -5,8 +5,8 @@
 #include <shared_mutex>
 #include <mutex>
 #include <optional>
-#include <thread>   // Background thread ke liye
-#include <atomic>   // Thread ko safely stop karne ke liye
+#include <thread>
+#include <atomic>
 #include <vector>
 
 struct Record {
@@ -16,7 +16,7 @@ struct Record {
 
 class StorageEngine {
 private:
-    size_t capacity; // Database ki maximum limit
+    size_t capacity; // Maximum key capacity
     
     // Core Data Structures
     std::unordered_map<std::string, Record> dataStore;
@@ -30,22 +30,21 @@ private:
     std::atomic<bool> is_running;
     std::thread cleanup_thread;
 
-    // Helper function LRU eviction ke liye
+    // Helper functions for eviction and cleanup
     void evictOldest();
-    void cleanupTask(); // Thread jo purane data ko delete karega
+    void cleanupTask(); // Background thread worker for expired keys
 
 public:
-    // Constructor jisme memory limit set hogi
     StorageEngine(size_t max_capacity);
     ~StorageEngine();
 
-    // Core Functions
+    // Core storage operations
     void put(const std::string& key, const std::string& value, int ttl_seconds = 0);
     std::optional<std::string> get(const std::string& key);
     bool remove(const std::string& key);
 
     void clearAll();
 
-    // NAYA: Data rebalancing ke liye saara data nikalne ka function
+    // Retrieves all key-value pairs for cluster rebalancing
     std::vector<std::pair<std::string, std::string>> getAllData();
 };

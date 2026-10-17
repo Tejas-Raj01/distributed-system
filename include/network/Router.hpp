@@ -1,8 +1,8 @@
 #pragma once
 #include <string>
-#include "../../external/httplib.h" // HTTP Server aur Client dono ke liye
+#include "../../external/httplib.h"
 
-// Baaki sabhi modules ki forward declarations
+// Forward declarations of cluster modules
 class StorageEngine;
 class ConsistentHash;
 class WAL;
@@ -11,27 +11,26 @@ class Replicator;
 
 class Router {
 private:
-    std::string myAddress; // Is server ka khud ka address (e.g., "127.0.0.1:8080")
-    httplib::Server server; // Web server object
+    std::string myAddress; // Node address (e.g., "127.0.0.1:8080")
+    httplib::Server server;
     
-    // Sabhi components ke pointers
+    // Component pointers
     StorageEngine* storage;
     ConsistentHash* hashRing;
     WAL* wal;
     Gossip* gossip;
     Replicator* replicator;
 
-    // Routing setup karne ka internal function
+    // Internal route initialization
     void setupRoutes();
 
 public:
-    // Constructor jisme hum saare engines pass karenge
     Router(const std::string& address, StorageEngine* se, ConsistentHash* ch, 
            WAL* w, Gossip* g, Replicator* r);
 
-    // Server start karne ka function
+    // Starts HTTP server on the given port
     void start(int port);
 
-    // 📦 NAYA: Data Rebalancing trigger karne ka sender function
+    // Initiates data rebalancing when a new node joins the cluster
     void initiateRebalance(const std::string& newNodeAddress);
 };
